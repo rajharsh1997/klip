@@ -27,7 +27,34 @@ pub fn detect_backend() -> Backend {
 /// - KDE: event-driven D-Bus signals (zero CPU)
 /// - GNOME/other Wayland: polling via wl-paste --list-types
 /// - X11: selection owner tracking via x11rb
+///
+/// Override via `KLIP_WATCHER=kde|gnome|x11` env var for testing.
 pub fn start_watcher(tx: Sender<ClipEntry>) -> Result<()> {
+    // Allow env override for testing
+    if let Ok(override_val) = std::env::var("KLIP_WATCHER") {
+        match override_val.to_lowercase().as_str() {
+            "kde" => {
+                log::info!("KLIP_WATCHER=kde forced — trying KDE D-Bus");
+                if kde::try_watch(tx).is_ok() {
+                    return Ok(());
+                }
+                log::warn!("KDE D-Bus failed despite KLIP_WATCHER=kde");
+                return Err(anyhow::anyhow!("KDE D-Bus not available"));
+            }
+            "gnome" | "fallback" => {
+                log::info!("KLIP_WATCHER={} forced — using polling fallback", override_val);
+                return fallback::start_watch(tx);
+            }
+            "x11" => {
+                log::info!("KLIP_WATCHER=x11 forced");
+                return x11::start_watch(tx);
+            }
+            other => {
+                log::warn!("Unknown KLIP_WATCHER={}, falling back to auto-detect", other);
+            }
+        }
+    }
+
     let backend = detect_backend();
     log::info!("Starting clipboard watcher on {:?}", backend);
 

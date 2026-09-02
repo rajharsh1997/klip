@@ -15,18 +15,65 @@ A keyboard-driven clipboard manager for Linux, inspired by Maccy but built nativ
 ## Architecture
 
 ```
-┌─────────────┐     Unix Socket      ┌──────────────┐
-│   klip-gui  │ ◄──────────────────► │    klipd     │
-│  (GTK4 GUI) │     JSON/IPC         │  (Daemon)    │
-└─────────────┘                      │              │
-                                     │  ┌────────┐  │
-                                     │  │ SQLite │  │
-                                     │  └────────┘  │
-                                     │  ┌──────────┐ │
-                                     │  │ Watcher  │ │
-                                     │  │(Wl/X11)  │ │
-                                     │  └──────────┘ │
-                                     └──────────────┘
+┌─────────────┐     Unix Socket      ┌──────────────────────────────┐
+│   klip-gui  │ ◄──────────────────► │          klipd              │
+│  (GTK4 GUI) │     JSON/IPC         │         (Daemon)            │
+└─────────────┘                      │                              │
+                                     │  ┌────────────────────────┐  │
+                                     │  │    Clipboard Watcher   │  │
+                                     │  │  ┌──────┐┌──────┐┌──┐ │  │
+                                     │  │  │ KDE  ││GNOME ││X11│ │  │
+                                     │  │  │ D-Bus││Poll  ││   │ │  │
+                                     │  │  └──────┘└──────┘└──┘ │  │
+                                     │  └──────────┬─────────────┘  │
+                                     │             ▼                │
+                                     │  ┌────────────────────────┐  │
+                                     │  │    Common History      │  │
+                                     │  │  ┌──────┐┌──────┐┌──┐ │  │
+                                     │  │  │SQLite││Search││...│ │  │
+                                     │  │  └──────┘└──────┘└──┘ │  │
+                                     │  └────────────────────────┘  │
+                                     └──────────────────────────────┘
+```
+
+## Clipboard Watcher Backends
+
+Klip supports multiple clipboard monitoring strategies, automatically selecting the best one for your desktop:
+
+| Backend | Desktop | Method | CPU Usage | Latency |
+|---------|---------|--------|-----------|---------|
+| **KDE D-Bus** | KDE Plasma | Listens for Klipper `clipboardHistoryUpdated` signal via `dbus-monitor` | Zero (event-driven) | Instant |
+| **GNOME/Other** | GNOME, Sway, wlroots | Polls `wl-paste --list-types` every 5s for MIME type changes, reads text only when types change | Minimal (5s interval, no data transfer) | ~5s |
+| **X11** | X11/XWayland | Tracks clipboard selection owner changes via `x11rb` | Event-driven | Instant |
+
+### Testing Backends
+
+You can force a specific backend using the `KLIP_WATCHER` environment variable:
+
+```bash
+# Test KDE backend (requires Klipper running)
+KLIP_WATCHER=kde klipd
+
+# Test GNOME/fallback polling backend
+KLIP_WATCHER=gnome klipd
+
+# Test X11 backend
+KLIP_WATCHER=x11 klipd
+```
+
+Or use the test script:
+
+```bash
+# Test all backends
+./test-backend.sh all
+
+# Test a specific backend
+./test-backend.sh kde
+./test-backend.sh gnome
+./test-backend.sh x11
+
+# Watch daemon logs with debug output
+./test-backend.sh watch
 ```
 
 ## Quick Start
@@ -66,10 +113,14 @@ klip/
 ├── klip-common/     # Shared types & IPC protocol
 ├── klipd/           # Background daemon
 │   ├── src/
-│   │   ├── main.rs      # Entry point
-│   │   ├── storage.rs   # SQLite storage engine
-│   │   ├── watcher.rs   # Clipboard listener (Wayland/X11)
-│   │   └── ipc.rs       # Unix socket IPC server
+│   │   ├── main.rs          # Entry point
+│   │   ├── storage.rs       # SQLite storage engine
+│   │   ├── watcher/         # Clipboard watcher (multi-backend)
+│   │   │   ├── mod.rs       # Dispatcher & shared utilities
+│   │   │   ├── kde.rs       # KDE D-Bus event-driven backend
+│   │   │   ├── fallback.rs  # GNOME/other polling backend
+│   │   │   └── x11.rs       # X11 selection tracking backend
+│   │   └── ipc.rs           # Unix socket IPC server
 ├── klip-gui/        # GTK4 floating palette
 │   ├── src/
 │   │   ├── main.rs      # GTK4 UI
@@ -77,6 +128,7 @@ klip/
 │   │   └── style.css    # Styling
 ├── build.sh         # Build script
 ├── install.sh       # Install script
+├── test-backend.sh  # Backend test script
 └── klipd.service    # systemd user service
 ```
 
