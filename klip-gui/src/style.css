@@ -1,0 +1,74 @@
+.main-box {
+    background-color: shade(@window_bg_color, 0.95);
+    border-radius: 12px;
+    border: 1px solid @borders;
+}
+
+.search-entry {
+    margin: 8px;
+    margin-bottom: 0;
+    border-radius: 8px;
+    font-size: 14px;
+}
+
+.clip-list {
+    background: transparent;
+}
+
+.clip-row {
+    background: transparent;
+    border-radius: 6px;
+    margin: 2px 6px;
+    padding: 2px 0;
+    transition: background-color 0.1s ease;
+}
+
+.clip-row:hover {
+    background-color: alpha(@accent_bg_color, 0.15);
+}
+
+.clip-row:selected {
+    background-color: alpha(@accent_bg_color, 0.3);
+}
+
+.clip-content {
+    font-family: monospace;
+    font-size: 13px;
+    color: @window_fg_color;
+}
+
+.section-header {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: alpha(@window_fg_color, 0.5);
+    padding: 4px 0;
+}
+
+.badge {
+    min-width: 20px;
+    min-height: 20px;
+    border-radius: 10px;
+    background-color: alpha(@accent_bg_color, 0.2);
+    color: @accent_fg_color;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 6px;
+    margin-right: 6px;
+}
+
+.pin-icon {
+    color: @accent_bg_color;
+    margin-right: 4px;
+}
+
+.empty-label {
+    font-size: 14px;
+    color: alpha(@window_fg_color, 0.4);
+}
+
+.error-label {
+    font-size: 14px;
+    color: @error_color;
+}
