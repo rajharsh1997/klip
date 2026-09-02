@@ -14,17 +14,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build-and-package:
-    name: Package (${{ matrix.format }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            format: deb
-          - os: fedora-40
-            format: rpm
-    runs-on: ${{ matrix.os }}
+  build-deb:
+    name: Package (.deb)
+    runs-on: ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v4
@@ -34,51 +26,56 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          if command -v apt-get &>/dev/null; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq \
-              libgtk-4-dev libadwaita-1-dev \
-              libgraphene-1.0-dev libsqlite3-dev \
-              libx11-dev libxcb1-dev \
-              wl-clipboard
-          elif command -v dnf &>/dev/null; then
-            sudo dnf install -y \
-              gtk4-devel libadwaita-devel \
-              graphene-devel libxcb-devel \
-              wl-clipboard
-          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libgtk-4-dev libadwaita-1-dev \
+            libgraphene-1.0-dev libsqlite3-dev \
+            libx11-dev libxcb1-dev \
+            wl-clipboard
 
       - name: Install cargo-deb
-        if: matrix.format == 'deb'
         run: cargo install cargo-deb --locked
 
       - name: Build .deb package
-        if: matrix.format == 'deb'
+        run: cargo deb -p klip
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: klip-deb
+          path: target/debian/*.deb
+
+  build-rpm:
+    name: Package (.rpm)
+    runs-on: ubuntu-24.04
+    container: fedora:40
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
         run: |
-          cargo deb -p klip
-          echo "DEB_FILE=$(ls target/debian/*.deb)" >> $GITHUB_ENV
+          dnf install -y \
+            gtk4-devel libadwaita-devel \
+            graphene-devel libxcb-devel \
+            wl-clipboard \
+            cargo rust
 
       - name: Install cargo-generate-rpm
-        if: matrix.format == 'rpm'
         run: cargo install cargo-generate-rpm --locked
 
       - name: Build .rpm package
-        if: matrix.format == 'rpm'
-        run: |
-          cargo generate-rpm -p klip
-          echo "RPM_FILE=$(ls target/generate-rpm/*.rpm)" >> $GITHUB_ENV
+        run: cargo generate-rpm -p klip
 
-      - name: Upload package artifact
+      - name: Upload .rpm artifact
         uses: actions/upload-artifact@v4
         with:
-          name: klip-${{ matrix.format }}
-          path: |
-            target/debian/*.deb
-            target/generate-rpm/*.rpm
+          name: klip-rpm
+          path: target/generate-rpm/*.rpm
 
   release:
     if: (startsWith(github.ref, 'refs/tags/v') || inputs.release) && github.event_name != 'pull_request'
-    needs: [build-and-package]
+    needs: [build-deb, build-rpm]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
