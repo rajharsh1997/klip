@@ -134,15 +134,30 @@ fn build_ui(app: &gtk4::Application) {
 
     refresh_list(None, &entries, &list_box, &socket_path);
 
-    // ── Search ────────────────────────────────────────────────────────────────
+    // ── Search (debounced to prevent flicker) ────────────────────────────────
     {
         let entries = entries.clone();
         let list_box = list_box.clone();
         let socket_path = socket_path.clone();
+        let debounce_id: Rc<std::cell::Cell<Option<glib::SourceId>>> = Rc::new(std::cell::Cell::new(None));
         search_entry.connect_search_changed(move |e| {
+            // Cancel any pending refresh
+            if let Some(id) = debounce_id.take() {
+                id.remove();
+            }
+            // Capture the query text now (before the timeout)
             let q = e.text();
-            let q = if q.is_empty() { None } else { Some(q.as_str()) };
-            refresh_list(q, &entries, &list_box, &socket_path);
+            let q = if q.is_empty() { None } else { Some(q.to_string()) };
+            // Schedule a refresh after 150ms debounce
+            let entries = entries.clone();
+            let list_box = list_box.clone();
+            let socket_path = socket_path.clone();
+            let debounce = debounce_id.clone();
+            let id = glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
+                refresh_list(q.as_deref(), &entries, &list_box, &socket_path);
+                debounce.set(None);
+            });
+            debounce_id.set(Some(id));
         });
     }
 
@@ -168,13 +183,18 @@ fn build_ui(app: &gtk4::Application) {
         window.add_controller(ctrl);
     }
 
-    // ── Keyboard: digits 1-9 quick-copy (capture on search entry) ────────────
+    // ── Keyboard: digits 1-9 quick-copy (capture on window, only when search is empty) ─
     {
         let entries = entries.clone();
         let socket_path = socket_path.clone();
-        let window = window.clone();
+        let window_digit = window.clone();
+        let search = search_entry.clone();
         let ctrl = gtk4::EventControllerKey::new();
         ctrl.connect_key_pressed(move |_, keyval, _, _| {
+            // Only intercept digits when search box is empty (not typing a search)
+            if !search.text().is_empty() {
+                return glib::Propagation::Proceed;
+            }
             let v = keyval.into_glib();
             let lo = gdk::Key::_1.into_glib();
             let hi = gdk::Key::_9.into_glib();
@@ -183,13 +203,13 @@ fn build_ui(app: &gtk4::Application) {
                 let ents = entries.borrow();
                 if idx < ents.len() {
                     let _ = client::copy_entry(ents[idx].id, &socket_path);
-                    window.close();
+                    window_digit.close();
                 }
                 return glib::Propagation::Stop;
             }
             glib::Propagation::Proceed
         });
-        search_entry.add_controller(ctrl);
+        window.add_controller(ctrl);
     }
 
     // ── Row click ─────────────────────────────────────────────────────────────

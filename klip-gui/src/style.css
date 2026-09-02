@@ -1,7 +1,7 @@
 .main-box {
-    background-color: shade(@window_bg_color, 0.95);
+    background-color: #2e2e2e;
     border-radius: 12px;
-    border: 1px solid @borders;
+    border: 1px solid #555555;
 }
 
 .search-entry {
@@ -20,21 +20,20 @@
     border-radius: 6px;
     margin: 2px 6px;
     padding: 2px 0;
-    transition: background-color 0.1s ease;
 }
 
 .clip-row:hover {
-    background-color: alpha(@accent_bg_color, 0.15);
+    background-color: rgba(61, 174, 233, 0.2);
 }
 
 .clip-row:selected {
-    background-color: alpha(@accent_bg_color, 0.3);
+    background-color: rgba(61, 174, 233, 0.35);
 }
 
 .clip-content {
     font-family: monospace;
     font-size: 13px;
-    color: @window_fg_color;
+    color: #ffffff;
 }
 
 .section-header {
@@ -42,7 +41,7 @@
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    color: alpha(@window_fg_color, 0.5);
+    color: rgba(255, 255, 255, 0.5);
     padding: 4px 0;
 }
 
@@ -50,8 +49,8 @@
     min-width: 20px;
     min-height: 20px;
     border-radius: 10px;
-    background-color: alpha(@accent_bg_color, 0.2);
-    color: @accent_fg_color;
+    background-color: rgba(61, 174, 233, 0.3);
+    color: #ffffff;
     font-size: 11px;
     font-weight: 700;
     padding: 2px 6px;
@@ -59,16 +58,16 @@
 }
 
 .pin-icon {
-    color: @accent_bg_color;
+    color: #3dade9;
     margin-right: 4px;
 }
 
 .empty-label {
     font-size: 14px;
-    color: alpha(@window_fg_color, 0.4);
+    color: rgba(255, 255, 255, 0.4);
 }
 
 .error-label {
     font-size: 14px;
-    color: @error_color;
+    color: #ff4444;
 }
