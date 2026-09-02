@@ -20,7 +20,6 @@ extended-description = "Background daemon for Klip clipboard manager. Monitors c
 depends = "$auto, wl-clipboard"
 section = "utils"
 priority = "optional"
-systemd-units = ["klip.service"]
 
 [package.metadata.generate-rpm]
 assets = [
