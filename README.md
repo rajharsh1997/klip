@@ -78,19 +78,68 @@ Or use the test script:
 
 ## Quick Start
 
+### Build from source
+
 ```bash
 # Build
 ./build.sh
 
-# Install
+# Install (system-wide, requires sudo)
 ./install.sh
 
-# Start the daemon
+# Or install to ~/.local/bin without sudo
+BIN_DIR="$HOME/.local/bin" ./install.sh
+```
+
+### Start the daemon
+
+```bash
 systemctl --user start klipd
 systemctl --user enable klipd
+```
 
-# Launch the GUI
+### Launch the GUI
+
+```bash
 klip-gui
+```
+
+## Installation Options
+
+### Option 1: Build & install from source (recommended)
+
+```bash
+git clone https://github.com/rajharsh1997/klip.git
+cd klip
+./install.sh
+```
+
+This installs the binaries, a `.desktop` file (for global shortcut binding), and a systemd user service.
+
+### Option 2: Manual install
+
+```bash
+cargo build --release
+sudo install target/release/klipd target/release/klip-gui /usr/local/bin/
+```
+
+### Option 3: User-only install (no sudo)
+
+```bash
+cargo build --release
+mkdir -p ~/.local/bin
+install target/release/klipd ~/.local/bin/
+install target/release/klip-gui ~/.local/bin/
+# Add ~/.local/bin to your PATH if not already
+```
+
+### Uninstall
+
+```bash
+rm -f $(which klipd) $(which klip-gui)
+rm -f $HOME/.local/share/applications/klip-gui.desktop
+rm -f $HOME/.config/systemd/user/klipd.service
+systemctl --user daemon-reload
 ```
 
 ## Global Shortcut
