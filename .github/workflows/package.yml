@@ -21,6 +21,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Extract version from tag
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -39,6 +42,10 @@ jobs:
       - name: Build .deb package
         run: cargo deb -p klip
 
+      - name: Rename .deb with version
+        run: |
+          mv target/debian/*.deb target/debian/klip_${{ env.VERSION }}_amd64.deb
+
       - name: Upload .deb artifact
         uses: actions/upload-artifact@v4
         with:
@@ -52,6 +59,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
 
       - name: Install Rust (up-to-date)
         run: |
@@ -71,6 +81,10 @@ jobs:
 
       - name: Build .rpm package
         run: cargo generate-rpm -p klip
+
+      - name: Rename .rpm with version
+        run: |
+          mv target/generate-rpm/*.rpm target/generate-rpm/klip-${{ env.VERSION }}-amd64.rpm
 
       - name: Upload .rpm artifact
         uses: actions/upload-artifact@v4
