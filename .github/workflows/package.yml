@@ -55,7 +55,7 @@ jobs:
       - name: Build .deb package
         if: matrix.format == 'deb'
         run: |
-          cargo deb --no-build
+          cargo deb -p klip
           echo "DEB_FILE=$(ls target/debian/*.deb)" >> $GITHUB_ENV
 
       - name: Install cargo-generate-rpm
@@ -65,7 +65,7 @@ jobs:
       - name: Build .rpm package
         if: matrix.format == 'rpm'
         run: |
-          cargo generate-rpm
+          cargo generate-rpm -p klip
           echo "RPM_FILE=$(ls target/generate-rpm/*.rpm)" >> $GITHUB_ENV
 
       - name: Upload package artifact
