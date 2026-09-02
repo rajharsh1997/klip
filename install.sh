@@ -18,7 +18,7 @@ install_local() {
     echo "  Installing to user home (~/.local)..."
     mkdir -p "$LOCAL_BIN" "$DESKTOP_DIR" "$SERVICE_DIR"
 
-    install -Dm755 target/release/klipd "$LOCAL_BIN/klipd"
+    install -Dm755 target/release/klip "$LOCAL_BIN/klip"
     install -Dm755 target/release/klip-gui "$LOCAL_BIN/klip-gui"
 
     # Add to PATH if not already
@@ -31,7 +31,7 @@ install_local() {
 
 install_system() {
     echo "  Installing system-wide (/usr/local)..."
-    sudo install -Dm755 target/release/klipd "$BIN_DIR/klipd"
+    sudo install -Dm755 target/release/klip "$BIN_DIR/klip"
     sudo install -Dm755 target/release/klip-gui "$BIN_DIR/klip-gui"
 }
 
@@ -58,16 +58,16 @@ echo "  ✓ Desktop file: $DESKTOP_DIR/klip-gui.desktop"
 
 # Install systemd user service
 mkdir -p "$SERVICE_DIR"
-cp klipd.service "$SERVICE_DIR/klipd.service"
+cp klip.service "$SERVICE_DIR/klip.service"
 systemctl --user daemon-reload 2>/dev/null || true
-echo "  ✓ Systemd service: $SERVICE_DIR/klipd.service"
+echo "  ✓ Systemd service: $SERVICE_DIR/klip.service"
 
 echo ""
 echo "=== Installation complete! ==="
 echo ""
 echo "  Start the daemon:"
-echo "    systemctl --user start klipd"
-echo "    systemctl --user enable klipd"
+echo "    systemctl --user start klip"
+echo "    systemctl --user enable klip"
 echo ""
 echo "  Launch the GUI:"
 echo "    klip-gui"
@@ -76,7 +76,7 @@ echo "  Bind a global shortcut (e.g. Ctrl+Alt+V) to 'klip-gui'"
 echo "  in your desktop environment's keyboard settings."
 echo ""
 echo "  To uninstall:"
-echo "    rm -f \$(which klipd) \$(which klip-gui)"
+echo "    rm -f \$(which klip) \$(which klip-gui)"
 echo "    rm -f \$HOME/.local/share/applications/klip-gui.desktop"
-echo "    rm -f \$HOME/.config/systemd/user/klipd.service"
+echo "    rm -f \$HOME/.config/systemd/user/klip.service"
 echo "    systemctl --user daemon-reload"

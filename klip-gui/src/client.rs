@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 /// Connect to the daemon's Unix socket and send a request, returning the response.
 pub fn send_request(request: &DaemonRequest, socket_path: &PathBuf) -> Result<DaemonResponse, String> {
-    let stream = UnixStream::connect(socket_path).map_err(|e| format!("Cannot connect to klipd: {}", e))?;
+    let stream = UnixStream::connect(socket_path).map_err(|e| format!("Cannot connect to klip daemon: {}", e))?;
     let mut writer = stream.try_clone().map_err(|e| e.to_string())?;
     let mut reader = BufReader::new(stream);
 

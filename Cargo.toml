@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
     "klip-common",
-    "klipd",
+    "klip",
     "klip-gui",
 ]
 
@@ -10,3 +10,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+homepage = "https://github.com/rajharsh1997/klip"
+repository = "https://github.com/rajharsh1997/klip"
+description = "Keyboard-driven clipboard manager for Linux"
+authors = ["Harsh Raj"]

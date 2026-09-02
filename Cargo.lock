@@ -827,6 +827,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "klip"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "env_logger",
+ "klip-common",
+ "log",
+ "nucleo",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "wl-clipboard-rs",
+ "x11rb",
+]
+
+[[package]]
 name = "klip-common"
 version = "0.1.0"
 dependencies = [
@@ -846,23 +863,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
-]
-
-[[package]]
-name = "klipd"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "env_logger",
- "klip-common",
- "log",
- "nucleo",
- "rusqlite",
- "serde",
- "serde_json",
- "wl-clipboard-rs",
- "x11rb",
 ]
 
 [[package]]

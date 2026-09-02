@@ -124,7 +124,7 @@ fn build_ui(app: &gtk4::Application) {
                 }
             }
             Err(e) => {
-                let lbl = gtk4::Label::new(Some(&format!("Cannot reach klipd: {e}")));
+                let lbl = gtk4::Label::new(Some(&format!("Cannot reach klip daemon: {e}")));
                 lbl.add_css_class("error-label");
                 lbl.set_margin_top(24);
                 list_box.append(&lbl);

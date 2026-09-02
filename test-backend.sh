@@ -18,7 +18,7 @@ test_backend() {
     echo ""
 
     # Kill old daemon
-    pkill -f "klipd" 2>/dev/null || true
+    pkill -x "klip" 2>/dev/null || true
     rm -f "$SOCKET"
     sleep 0.5
 
@@ -43,7 +43,7 @@ EOF
     fi
 
     # Start daemon with forced backend
-    KLIP_WATCHER="$backend" RUST_LOG=info "$KLIP_DIR/target/debug/klipd" &
+    KLIP_WATCHER="$backend" RUST_LOG=info "$KLIP_DIR/target/debug/klip" &
     DAEMON_PID=$!
     sleep 2
 
@@ -71,10 +71,10 @@ EOF
 
 watch_logs() {
     echo "=== Watching daemon logs (Ctrl+C to stop) ==="
-    pkill -f "klipd" 2>/dev/null || true
+    pkill -x "klip" 2>/dev/null || true
     rm -f "$SOCKET"
     sleep 0.5
-    RUST_LOG=debug "$KLIP_DIR/target/debug/klipd"
+    RUST_LOG=debug "$KLIP_DIR/target/debug/klip"
 }
 
 # Main

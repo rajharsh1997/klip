@@ -16,7 +16,7 @@ A keyboard-driven clipboard manager for Linux, inspired by Maccy but built nativ
 
 ```
 ┌─────────────┐     Unix Socket      ┌──────────────────────────────┐
-│   klip-gui  │ ◄──────────────────► │          klipd              │
+│   klip-gui  │ ◄──────────────────► │          klip               │
 │  (GTK4 GUI) │     JSON/IPC         │         (Daemon)            │
 └─────────────┘                      │                              │
                                      │  ┌────────────────────────┐  │
@@ -52,13 +52,13 @@ You can force a specific backend using the `KLIP_WATCHER` environment variable:
 
 ```bash
 # Test KDE backend (requires Klipper running)
-KLIP_WATCHER=kde klipd
+KLIP_WATCHER=kde klip
 
 # Test GNOME/fallback polling backend
-KLIP_WATCHER=gnome klipd
+KLIP_WATCHER=gnome klip
 
 # Test X11 backend
-KLIP_WATCHER=x11 klipd
+KLIP_WATCHER=x11 klip
 ```
 
 Or use the test script:
@@ -94,8 +94,8 @@ BIN_DIR="$HOME/.local/bin" ./install.sh
 ### Start the daemon
 
 ```bash
-systemctl --user start klipd
-systemctl --user enable klipd
+systemctl --user start klip
+systemctl --user enable klip
 ```
 
 ### Launch the GUI
@@ -120,7 +120,7 @@ This installs the binaries, a `.desktop` file (for global shortcut binding), and
 
 ```bash
 cargo build --release
-sudo install target/release/klipd target/release/klip-gui /usr/local/bin/
+sudo install target/release/klip target/release/klip-gui /usr/local/bin/
 ```
 
 ### Option 3: User-only install (no sudo)
@@ -128,7 +128,7 @@ sudo install target/release/klipd target/release/klip-gui /usr/local/bin/
 ```bash
 cargo build --release
 mkdir -p ~/.local/bin
-install target/release/klipd ~/.local/bin/
+install target/release/klip ~/.local/bin/
 install target/release/klip-gui ~/.local/bin/
 # Add ~/.local/bin to your PATH if not already
 ```
@@ -136,9 +136,9 @@ install target/release/klip-gui ~/.local/bin/
 ### Uninstall
 
 ```bash
-rm -f $(which klipd) $(which klip-gui)
+rm -f $(which klip) $(which klip-gui)
 rm -f $HOME/.local/share/applications/klip-gui.desktop
-rm -f $HOME/.config/systemd/user/klipd.service
+rm -f $HOME/.config/systemd/user/klip.service
 systemctl --user daemon-reload
 ```
 
@@ -160,7 +160,7 @@ Bind a global shortcut (e.g., `Ctrl+Alt+V`) to `klip-gui` in your desktop enviro
 ```
 klip/
 ├── klip-common/     # Shared types & IPC protocol
-├── klipd/           # Background daemon
+├── klip/           # Background daemon
 │   ├── src/
 │   │   ├── main.rs          # Entry point
 │   │   ├── storage.rs       # SQLite storage engine
@@ -178,7 +178,7 @@ klip/
 ├── build.sh         # Build script
 ├── install.sh       # Install script
 ├── test-backend.sh  # Backend test script
-└── klipd.service    # systemd user service
+└── klip.service    # systemd user service
 ```
 
 ## License

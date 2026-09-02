@@ -1,5 +1,5 @@
 [package]
-name = "klipd"
+name = "klip"
 version.workspace = true
 edition.workspace = true
 description = "Klip clipboard manager daemon"
