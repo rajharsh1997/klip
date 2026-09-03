@@ -111,24 +111,26 @@ Pre-built packages are available on the [Releases page](https://github.com/rajha
 ### Debian / Ubuntu (.deb)
 
 ```bash
-# Download the .deb from releases, then:
 sudo dpkg -i klip_*.deb
 ```
 
 ### Fedora / RHEL (.rpm)
 
 ```bash
-# Download the .rpm from releases, then:
-sudo rpm -i klip-*.rpm
-# Or with DNF:
 sudo dnf install ./klip-*.rpm
 ```
 
 After installing, launch `klip` from your app tray or terminal — the daemon auto-starts.
 
+The package includes everything: `klip` (GUI), `klipd` (daemon), app icon, `.desktop` entry, and a systemd user service.
+
 ## Installation Options
 
-### Option 1: Build & install from source (recommended)
+### Option 1: Install from package (recommended)
+
+Download the `.deb` or `.rpm` from the [Releases page](https://github.com/rajharsh1997/klip/releases) and install it. One package includes everything: both binaries, icons, `.desktop` entry, and systemd service.
+
+### Option 2: Build & install from source
 
 ```bash
 git clone https://github.com/rajharsh1997/klip.git
@@ -136,9 +138,9 @@ cd klip
 ./install.sh
 ```
 
-This installs the binaries, a `.desktop` file (for app tray and global shortcut binding), and a systemd user service. The daemon starts automatically when you launch `klip`.
+This builds and installs the binaries, icons, `.desktop` file, and systemd user service. The daemon starts automatically when you launch `klip`.
 
-### Option 2: Manual install
+### Option 3: Manual install
 
 ```bash
 cargo build --release
@@ -202,8 +204,9 @@ klip/
 ├── build.sh         # Build script
 ├── icons/           # App icons (48x48, 128x128, 256x256)
 ├── install.sh       # Install script
+├── klip.desktop     # Desktop entry for app tray / shortcut binding
+├── klip.service     # systemd user service (starts klipd)
 ├── test-backend.sh  # Backend test script
-├── klip.service    # systemd user service (starts klipd)
 ```
 
 ## License

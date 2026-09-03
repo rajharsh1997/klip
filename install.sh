@@ -43,15 +43,7 @@ install_local() {
     gtk-update-icon-cache "${LOCAL_ICON_DIR%/*}" 2>/dev/null || true
 
     # Install .desktop file (for app tray & global shortcut binding)
-    cat > "$DESKTOP_DIR/klip.desktop" <<EOF
-[Desktop Entry]
-Name=Klip Clipboard Manager
-Comment=Show clipboard history palette
-Exec=klip
-Icon=klip
-Type=Application
-Categories=Utility;
-EOF
+    install -Dm644 klip.desktop "$DESKTOP_DIR/klip.desktop"
     echo "  ✓ Desktop file: $DESKTOP_DIR/klip.desktop"
 
     # Install systemd user service
@@ -83,15 +75,7 @@ install_system() {
     # User files (.desktop, service) go to the actual user's home
     mkdir -p "$DESKTOP_DIR" "$SERVICE_DIR"
 
-    cat > "$DESKTOP_DIR/klip.desktop" <<EOF
-[Desktop Entry]
-Name=Klip Clipboard Manager
-Comment=Show clipboard history palette
-Exec=klip
-Icon=klip
-Type=Application
-Categories=Utility;
-EOF
+    install -Dm644 klip.desktop "$DESKTOP_DIR/klip.desktop"
     echo "  ✓ Desktop file: $DESKTOP_DIR/klip.desktop"
 
     cp klip.service "$SERVICE_DIR/klip.service"

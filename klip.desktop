@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Klip Clipboard Manager
+Comment=Show clipboard history palette
+Exec=klip
+Icon=klip
+Type=Application
+Categories=Utility;

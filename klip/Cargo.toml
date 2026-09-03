@@ -20,10 +20,23 @@ extended-description = "Background daemon for Klip clipboard manager. Monitors c
 depends = "$auto, wl-clipboard"
 section = "utils"
 priority = "optional"
+assets = [
+    ["../target/release/klipd", "usr/bin/klipd", "755"],
+    ["../target/release/klip", "usr/bin/klip", "755"],
+    ["../icons/klip-48.png", "usr/share/icons/hicolor/48x48/apps/klip.png", "644"],
+    ["../icons/klip-128.png", "usr/share/icons/hicolor/128x128/apps/klip.png", "644"],
+    ["../icons/klip.png", "usr/share/icons/hicolor/256x256/apps/klip.png", "644"],
+    ["../klip.desktop", "usr/share/applications/klip.desktop", "644"],
+]
 
 [package.metadata.generate-rpm]
 assets = [
     { source = "../klip.service", dest = "/usr/lib/systemd/user/klip.service" },
+    { source = "../target/release/klip", dest = "/usr/bin/klip" },
+    { source = "../icons/klip-48.png", dest = "/usr/share/icons/hicolor/48x48/apps/klip.png" },
+    { source = "../icons/klip-128.png", dest = "/usr/share/icons/hicolor/128x128/apps/klip.png" },
+    { source = "../icons/klip.png", dest = "/usr/share/icons/hicolor/256x256/apps/klip.png" },
+    { source = "../klip.desktop", dest = "/usr/share/applications/klip.desktop" },
 ]
 
 [dependencies]

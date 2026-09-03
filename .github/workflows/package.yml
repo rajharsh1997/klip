@@ -39,6 +39,9 @@ jobs:
       - name: Install cargo-deb
         run: cargo install cargo-deb --locked
 
+      - name: Build all binaries
+        run: cargo build --release
+
       - name: Build .deb package
         run: cargo deb -p klip
 
@@ -55,7 +58,7 @@ jobs:
   build-rpm:
     name: Package (.rpm)
     runs-on: ubuntu-24.04
-    container: fedora:40
+    container: fedora:43
 
     steps:
       - uses: actions/checkout@v4
@@ -78,6 +81,9 @@ jobs:
 
       - name: Install cargo-generate-rpm
         run: cargo install cargo-generate-rpm --locked
+
+      - name: Build all binaries
+        run: cargo build --release
 
       - name: Build .rpm package
         run: cargo generate-rpm -p klip
