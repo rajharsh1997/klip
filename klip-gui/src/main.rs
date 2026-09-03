@@ -17,6 +17,58 @@ fn default_socket_path() -> PathBuf {
     base.join("klip").join("klip.sock")
 }
 
+/// Try to start the daemon if it's not already running.
+fn ensure_daemon_running(socket_path: &PathBuf) {
+    if socket_path.exists() {
+        return;
+    }
+
+    eprintln!("[klip-gui] Daemon socket not found, starting daemon...");
+
+    // Try systemd first (preferred — handles lifecycle, auto-restart, etc.)
+    let systemd_ok = std::process::Command::new("systemctl")
+        .args(["--user", "start", "klipd"])
+        .status()
+        .ok()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if systemd_ok {
+        for _ in 0..20 {
+            if socket_path.exists() {
+                eprintln!("[klip-gui] Daemon started via systemd");
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        eprintln!("[klip-gui] systemd start returned ok but socket not yet visible, proceeding...");
+        return;
+    }
+
+    // Fallback: spawn daemon directly (non-systemd: static distros, containers, etc.)
+    eprintln!("[klip-gui] Falling back to direct daemon spawn...");
+    match std::process::Command::new("klipd")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(_) => {
+            for _ in 0..20 {
+                if socket_path.exists() {
+                    eprintln!("[klip-gui] Daemon started directly");
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            eprintln!("[klip-gui] Daemon process spawned but socket not yet visible, proceeding...");
+        }
+        Err(e) => {
+            eprintln!("[klip-gui] Could not start daemon: {e}");
+        }
+    }
+}
+
 fn main() -> glib::ExitCode {
     // KDE Plasma Wayland: GTK4 native Wayland backend doesn't receive an XDG
     // activation token when launched from a shortcut/terminal, so the compositor
@@ -31,22 +83,22 @@ fn main() -> glib::ExitCode {
     );
 
     app.connect_activate(|app| {
-        build_ui(app);
+        let socket_path = default_socket_path();
+        ensure_daemon_running(&socket_path);
+        build_ui(app, socket_path);
     });
 
     app.run()
 }
 
-fn build_ui(app: &gtk4::Application) {
-    let socket_path = default_socket_path();
-
+fn build_ui(app: &gtk4::Application, socket_path: PathBuf) {
     // ── Window ────────────────────────────────────────────────────────────────
     let window = gtk4::ApplicationWindow::new(app);
     window.set_title(Some("Klip — Clipboard"));
     window.set_default_size(460, 520);
     window.set_resizable(true);
     window.set_decorated(true);
-    window.set_icon_name(Some("edit-paste-symbolic"));
+    window.set_icon_name(Some("klip"));
 
     // Quit the app loop when the window is closed
     let app_for_close = app.clone();

@@ -16,8 +16,8 @@ A keyboard-driven clipboard manager for Linux, inspired by Maccy but built nativ
 
 ```
 ┌─────────────┐     Unix Socket      ┌──────────────────────────────┐
-│   klip-gui  │ ◄──────────────────► │          klip               │
-│  (GTK4 GUI) │     JSON/IPC         │         (Daemon)            │
+│   klip       │ ◄──────────────────► │       klipd            │
+│  (GTK4 GUI)  │     JSON/IPC         │       (Daemon)          │
 └─────────────┘                      │                              │
                                      │  ┌────────────────────────┐  │
                                      │  │    Clipboard Watcher   │  │
@@ -52,13 +52,13 @@ You can force a specific backend using the `KLIP_WATCHER` environment variable:
 
 ```bash
 # Test KDE backend (requires Klipper running)
-KLIP_WATCHER=kde klip
+KLIP_WATCHER=kde klipd
 
 # Test GNOME/fallback polling backend
-KLIP_WATCHER=gnome klip
+KLIP_WATCHER=gnome klipd
 
 # Test X11 backend
-KLIP_WATCHER=x11 klip
+KLIP_WATCHER=x11 klipd
 ```
 
 Or use the test script:
@@ -91,18 +91,40 @@ Or use the test script:
 BIN_DIR="$HOME/.local/bin" ./install.sh
 ```
 
-### Start the daemon
+### Launch the GUI (daemon auto-starts)
 
 ```bash
-systemctl --user start klip
-systemctl --user enable klip
+klip
 ```
 
-### Launch the GUI
+That's it! `klip` automatically starts the daemon if it's not already running — no need to run `systemctl` manually. The daemon will keep running in the background for future invocations.
+
+> **Note**: If you prefer the daemon to start automatically on login, you can still enable it:
+> ```bash
+> systemctl --user enable klipd
+> ```
+
+## Install from Packages
+
+Pre-built packages are available on the [Releases page](https://github.com/rajharsh1997/klip/releases).
+
+### Debian / Ubuntu (.deb)
 
 ```bash
-klip-gui
+# Download the .deb from releases, then:
+sudo dpkg -i klip_*.deb
 ```
+
+### Fedora / RHEL (.rpm)
+
+```bash
+# Download the .rpm from releases, then:
+sudo rpm -i klip-*.rpm
+# Or with DNF:
+sudo dnf install ./klip-*.rpm
+```
+
+After installing, launch `klip` from your app tray or terminal — the daemon auto-starts.
 
 ## Installation Options
 
@@ -114,13 +136,13 @@ cd klip
 ./install.sh
 ```
 
-This installs the binaries, a `.desktop` file (for global shortcut binding), and a systemd user service.
+This installs the binaries, a `.desktop` file (for app tray and global shortcut binding), and a systemd user service. The daemon starts automatically when you launch `klip`.
 
 ### Option 2: Manual install
 
 ```bash
 cargo build --release
-sudo install target/release/klip target/release/klip-gui /usr/local/bin/
+sudo install target/release/klipd target/release/klip /usr/local/bin/
 ```
 
 ### Option 3: User-only install (no sudo)
@@ -128,23 +150,25 @@ sudo install target/release/klip target/release/klip-gui /usr/local/bin/
 ```bash
 cargo build --release
 mkdir -p ~/.local/bin
+install target/release/klipd ~/.local/bin/
 install target/release/klip ~/.local/bin/
-install target/release/klip-gui ~/.local/bin/
 # Add ~/.local/bin to your PATH if not already
 ```
 
 ### Uninstall
 
 ```bash
-rm -f $(which klip) $(which klip-gui)
-rm -f $HOME/.local/share/applications/klip-gui.desktop
+rm -f $(which klip) $(which klipd)
+rm -f $HOME/.local/share/applications/klip.desktop
 rm -f $HOME/.config/systemd/user/klip.service
+rm -f $HOME/.local/share/icons/hicolor/*/apps/klip.png
+sudo rm -f /usr/local/share/icons/hicolor/*/apps/klip.png 2>/dev/null
 systemctl --user daemon-reload
 ```
 
 ## Global Shortcut
 
-Bind a global shortcut (e.g., `Ctrl+Alt+V`) to `klip-gui` in your desktop environment's keyboard settings.
+Bind a global shortcut (e.g., `Ctrl+Alt+V`) to `klip` in your desktop environment's keyboard settings.
 
 ## Keyboard Shortcuts (within GUI)
 
@@ -160,7 +184,7 @@ Bind a global shortcut (e.g., `Ctrl+Alt+V`) to `klip-gui` in your desktop enviro
 ```
 klip/
 ├── klip-common/     # Shared types & IPC protocol
-├── klip/           # Background daemon
+├── klip/           # Background daemon (produces klipd binary)
 │   ├── src/
 │   │   ├── main.rs          # Entry point
 │   │   ├── storage.rs       # SQLite storage engine
@@ -170,15 +194,16 @@ klip/
 │   │   │   ├── fallback.rs  # GNOME/other polling backend
 │   │   │   └── x11.rs       # X11 selection tracking backend
 │   │   └── ipc.rs           # Unix socket IPC server
-├── klip-gui/        # GTK4 floating palette
+├── klip-gui/        # GTK4 floating palette (produces klip binary)
 │   ├── src/
 │   │   ├── main.rs      # GTK4 UI
 │   │   ├── client.rs    # IPC client
 │   │   └── style.css    # Styling
 ├── build.sh         # Build script
+├── icons/           # App icons (48x48, 128x128, 256x256)
 ├── install.sh       # Install script
 ├── test-backend.sh  # Backend test script
-└── klip.service    # systemd user service
+├── klip.service    # systemd user service (starts klipd)
 ```
 
 ## License

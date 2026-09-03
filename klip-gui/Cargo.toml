@@ -3,6 +3,10 @@ name = "klip-gui"
 version.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "klip"
+path = "src/main.rs"
+
 [dependencies]
 klip-common = { path = "../klip-common" }
 gtk4 = "0.9"

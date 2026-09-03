@@ -43,7 +43,7 @@ EOF
     fi
 
     # Start daemon with forced backend
-    KLIP_WATCHER="$backend" RUST_LOG=info "$KLIP_DIR/target/debug/klip" &
+    KLIP_WATCHER="$backend" RUST_LOG=info "$KLIP_DIR/target/debug/klipd" &
     DAEMON_PID=$!
     sleep 2
 

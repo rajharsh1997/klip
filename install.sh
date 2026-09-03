@@ -6,20 +6,59 @@ echo ""
 
 # Configuration — override with env vars
 BIN_DIR="${BIN_DIR:-/usr/local/bin}"
-LOCAL_BIN="${LOCAL_BIN:-$HOME/.local/bin}"
-DESKTOP_DIR="${DESKTOP_DIR:-$HOME/.local/share/applications}"
-SERVICE_DIR="${SERVICE_DIR:-$HOME/.config/systemd/user}"
+ICON_DIR="${ICON_DIR:-/usr/local/share/icons/hicolor}"
 
-# Build first
-echo "  Building release binaries..."
-cargo build --release --quiet
+# Resolve user home — works both with and without sudo
+if [ -n "${SUDO_USER:-}" ]; then
+    USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+else
+    USER_HOME="$HOME"
+fi
+
+LOCAL_BIN="${LOCAL_BIN:-$USER_HOME/.local/bin}"
+DESKTOP_DIR="${DESKTOP_DIR:-$USER_HOME/.local/share/applications}"
+SERVICE_DIR="${SERVICE_DIR:-$USER_HOME/.config/systemd/user}"
+LOCAL_ICON_DIR="${LOCAL_ICON_DIR:-$USER_HOME/.local/share/icons/hicolor}"
+
+# Build first (skip if already built — sudo may not have cargo in PATH)
+if command -v cargo &>/dev/null; then
+    echo "  Building release binaries..."
+    cargo build --release --quiet
+else
+    echo "  Skipping build (cargo not in PATH — assuming binaries already exist)"
+fi
 
 install_local() {
     echo "  Installing to user home (~/.local)..."
     mkdir -p "$LOCAL_BIN" "$DESKTOP_DIR" "$SERVICE_DIR"
 
-    install -Dm755 target/release/klip "$LOCAL_BIN/klip"
-    install -Dm755 target/release/klip-gui "$LOCAL_BIN/klip-gui"
+    install -Dm755 target/release/klipd "$LOCAL_BIN/klipd"
+    install -Dm755 target/release/klip-gui "$LOCAL_BIN/klip"
+
+    # Install icons to user local
+    for size in 48 128; do
+        install -Dm644 "icons/klip-${size}.png" "${LOCAL_ICON_DIR}/${size}x${size}/apps/klip.png"
+    done
+    install -Dm644 "icons/klip.png" "${LOCAL_ICON_DIR}/256x256/apps/klip.png"
+    gtk-update-icon-cache "${LOCAL_ICON_DIR%/*}" 2>/dev/null || true
+
+    # Install .desktop file (for app tray & global shortcut binding)
+    cat > "$DESKTOP_DIR/klip.desktop" <<EOF
+[Desktop Entry]
+Name=Klip Clipboard Manager
+Comment=Show clipboard history palette
+Exec=klip
+Icon=klip
+Type=Application
+Categories=Utility;
+EOF
+    echo "  ✓ Desktop file: $DESKTOP_DIR/klip.desktop"
+
+    # Install systemd user service
+    cp klip.service "$SERVICE_DIR/klip.service"
+    systemctl --user daemon-reload 2>/dev/null || true
+    echo "  ✓ Systemd service: $SERVICE_DIR/klip.service"
+    echo "  ✓ Icons installed"
 
     # Add to PATH if not already
     if [[ ":$PATH:" != *":$LOCAL_BIN:"* ]]; then
@@ -31,8 +70,34 @@ install_local() {
 
 install_system() {
     echo "  Installing system-wide (/usr/local)..."
-    sudo install -Dm755 target/release/klip "$BIN_DIR/klip"
-    sudo install -Dm755 target/release/klip-gui "$BIN_DIR/klip-gui"
+    sudo install -Dm755 target/release/klipd "$BIN_DIR/klipd"
+    sudo install -Dm755 target/release/klip-gui "$BIN_DIR/klip"
+
+    # Install icons to system locations
+    for size in 48 128; do
+        sudo install -Dm644 "icons/klip-${size}.png" "${ICON_DIR}/${size}x${size}/apps/klip.png"
+    done
+    sudo install -Dm644 "icons/klip.png" "${ICON_DIR}/256x256/apps/klip.png"
+    sudo gtk-update-icon-cache /usr/local/share/icons/hicolor 2>/dev/null || true
+
+    # User files (.desktop, service) go to the actual user's home
+    mkdir -p "$DESKTOP_DIR" "$SERVICE_DIR"
+
+    cat > "$DESKTOP_DIR/klip.desktop" <<EOF
+[Desktop Entry]
+Name=Klip Clipboard Manager
+Comment=Show clipboard history palette
+Exec=klip
+Icon=klip
+Type=Application
+Categories=Utility;
+EOF
+    echo "  ✓ Desktop file: $DESKTOP_DIR/klip.desktop"
+
+    cp klip.service "$SERVICE_DIR/klip.service"
+    systemctl --user daemon-reload 2>/dev/null || true
+    echo "  ✓ Systemd service: $SERVICE_DIR/klip.service"
+    echo "  ✓ Icons installed"
 }
 
 # Check if we have sudo, install system-wide if possible
@@ -42,41 +107,23 @@ else
     install_local
 fi
 
-# Install .desktop file (for global shortcut binding)
-mkdir -p "$DESKTOP_DIR"
-cat > "$DESKTOP_DIR/klip-gui.desktop" <<EOF
-[Desktop Entry]
-Name=Klip Clipboard Manager
-Comment=Show clipboard history palette
-Exec=klip-gui
-Icon=edit-paste-symbolic
-Type=Application
-Categories=Utility;
-NoDisplay=true
-EOF
-echo "  ✓ Desktop file: $DESKTOP_DIR/klip-gui.desktop"
-
-# Install systemd user service
-mkdir -p "$SERVICE_DIR"
-cp klip.service "$SERVICE_DIR/klip.service"
-systemctl --user daemon-reload 2>/dev/null || true
-echo "  ✓ Systemd service: $SERVICE_DIR/klip.service"
-
 echo ""
 echo "=== Installation complete! ==="
 echo ""
-echo "  Start the daemon:"
-echo "    systemctl --user start klip"
-echo "    systemctl --user enable klip"
-echo ""
 echo "  Launch the GUI:"
-echo "    klip-gui"
+echo "    klip"
 echo ""
-echo "  Bind a global shortcut (e.g. Ctrl+Alt+V) to 'klip-gui'"
+echo "  The daemon starts automatically when you launch klip."
+echo "  For auto-start on login (optional):"
+echo "    systemctl --user enable klipd"
+echo ""
+echo "  Bind a global shortcut (e.g. Ctrl+Alt+V) to 'klip'"
 echo "  in your desktop environment's keyboard settings."
 echo ""
 echo "  To uninstall:"
-echo "    rm -f \$(which klip) \$(which klip-gui)"
-echo "    rm -f \$HOME/.local/share/applications/klip-gui.desktop"
+echo "    rm -f \$(which klip) \$(which klipd)"
+echo "    rm -f \$HOME/.local/share/applications/klip.desktop"
 echo "    rm -f \$HOME/.config/systemd/user/klip.service"
+echo "    rm -f \$HOME/.local/share/icons/hicolor/*/apps/klip.png"
+echo "    sudo rm -f /usr/local/share/icons/hicolor/*/apps/klip.png 2>/dev/null"
 echo "    systemctl --user daemon-reload"

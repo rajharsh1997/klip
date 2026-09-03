@@ -11,7 +11,7 @@ categories = ["command-line-utilities"]
 keywords = ["clipboard", "manager", "daemon"]
 
 [[bin]]
-name = "klip"
+name = "klipd"
 path = "src/main.rs"
 
 [package.metadata.deb]
