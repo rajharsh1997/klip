@@ -94,7 +94,7 @@ fn main() -> glib::ExitCode {
 fn build_ui(app: &gtk4::Application, socket_path: PathBuf) {
     // ── Window ────────────────────────────────────────────────────────────────
     let window = gtk4::ApplicationWindow::new(app);
-    window.set_title(Some("Klip — Clipboard"));
+    window.set_title(Some("Klip"));
     window.set_default_size(460, 520);
     window.set_resizable(true);
     window.set_decorated(true);

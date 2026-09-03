@@ -162,7 +162,7 @@ install target/release/klip ~/.local/bin/
 ```bash
 rm -f $(which klip) $(which klipd)
 rm -f $HOME/.local/share/applications/klip.desktop
-rm -f $HOME/.config/systemd/user/klip.service
+rm -f $HOME/.config/systemd/user/klipd.service
 rm -f $HOME/.local/share/icons/hicolor/*/apps/klip.png
 sudo rm -f /usr/local/share/icons/hicolor/*/apps/klip.png 2>/dev/null
 systemctl --user daemon-reload
@@ -205,7 +205,7 @@ klip/
 ├── icons/           # App icons (48x48, 128x128, 256x256)
 ├── install.sh       # Install script
 ├── klip.desktop     # Desktop entry for app tray / shortcut binding
-├── klip.service     # systemd user service (starts klipd)
+├── klipd.service    # systemd user service (starts klipd)
 ├── test-backend.sh  # Backend test script
 ```
 

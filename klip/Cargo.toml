@@ -27,11 +27,12 @@ assets = [
     ["../icons/klip-128.png", "usr/share/icons/hicolor/128x128/apps/klip.png", "644"],
     ["../icons/klip.png", "usr/share/icons/hicolor/256x256/apps/klip.png", "644"],
     ["../klip.desktop", "usr/share/applications/klip.desktop", "644"],
+    ["../klipd.service", "usr/lib/systemd/user/klipd.service", "644"],
 ]
 
 [package.metadata.generate-rpm]
 assets = [
-    { source = "../klip.service", dest = "/usr/lib/systemd/user/klip.service" },
+    { source = "../klipd.service", dest = "/usr/lib/systemd/user/klipd.service" },
     { source = "../target/release/klip", dest = "/usr/bin/klip" },
     { source = "../icons/klip-48.png", dest = "/usr/share/icons/hicolor/48x48/apps/klip.png" },
     { source = "../icons/klip-128.png", dest = "/usr/share/icons/hicolor/128x128/apps/klip.png" },

@@ -46,10 +46,9 @@ install_local() {
     install -Dm644 klip.desktop "$DESKTOP_DIR/klip.desktop"
     echo "  ✓ Desktop file: $DESKTOP_DIR/klip.desktop"
 
-    # Install systemd user service
-    cp klip.service "$SERVICE_DIR/klip.service"
+    cp klipd.service "$SERVICE_DIR/klipd.service"
     systemctl --user daemon-reload 2>/dev/null || true
-    echo "  ✓ Systemd service: $SERVICE_DIR/klip.service"
+    echo "  ✓ Systemd service: $SERVICE_DIR/klipd.service"
     echo "  ✓ Icons installed"
 
     # Add to PATH if not already
@@ -78,9 +77,9 @@ install_system() {
     install -Dm644 klip.desktop "$DESKTOP_DIR/klip.desktop"
     echo "  ✓ Desktop file: $DESKTOP_DIR/klip.desktop"
 
-    cp klip.service "$SERVICE_DIR/klip.service"
+    cp klipd.service "$SERVICE_DIR/klipd.service"
     systemctl --user daemon-reload 2>/dev/null || true
-    echo "  ✓ Systemd service: $SERVICE_DIR/klip.service"
+    echo "  ✓ Systemd service: $SERVICE_DIR/klipd.service"
     echo "  ✓ Icons installed"
 }
 
@@ -107,7 +106,7 @@ echo ""
 echo "  To uninstall:"
 echo "    rm -f \$(which klip) \$(which klipd)"
 echo "    rm -f \$HOME/.local/share/applications/klip.desktop"
-echo "    rm -f \$HOME/.config/systemd/user/klip.service"
+echo "    rm -f \$HOME/.config/systemd/user/klipd.service"
 echo "    rm -f \$HOME/.local/share/icons/hicolor/*/apps/klip.png"
 echo "    sudo rm -f /usr/local/share/icons/hicolor/*/apps/klip.png 2>/dev/null"
 echo "    systemctl --user daemon-reload"
