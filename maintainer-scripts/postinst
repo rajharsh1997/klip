@@ -1,23 +1,23 @@
 #!/bin/sh
 set -e
 
-# Remove binaries from v1.0.8 that were renamed in v1.0.9
-# Old: klip=daemon, klip-gui=GUI
-# New: klipd=daemon, klip=GUI
-for old_bin in /usr/bin/klip /usr/local/bin/klip /usr/bin/klip-gui /usr/local/bin/klip-gui; do
-    if [ -f "$old_bin" ] && [ ! -f "${old_bin}.dpkg-backup" ]; then
+# Remove old GUI binary from v1.0.8 (was klip-gui, now just klip)
+# Note: the old /usr/bin/klip (daemon) is correctly replaced by the
+# new /usr/bin/klip (GUI) automatically during dpkg upgrade.
+for old_bin in /usr/bin/klip-gui /usr/local/bin/klip-gui; do
+    if [ -f "$old_bin" ]; then
         rm -f "$old_bin"
     fi
 done
 
-# Remove old service file
+# Remove old service file (renamed klip.service → klipd.service)
 for old_svc in /usr/lib/systemd/user/klip.service /usr/local/lib/systemd/user/klip.service; do
     if [ -f "$old_svc" ]; then
         rm -f "$old_svc"
     fi
 done
 
-# Remove old desktop file
+# Remove old desktop file (renamed klip-gui.desktop → klip.desktop)
 if [ -f /usr/share/applications/klip-gui.desktop ]; then
     rm -f /usr/share/applications/klip-gui.desktop
 fi
