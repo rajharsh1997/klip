@@ -29,6 +29,7 @@ assets = [
     ["../klip.desktop", "usr/share/applications/klip.desktop", "644"],
     ["../klipd.service", "usr/lib/systemd/user/klipd.service", "644"],
 ]
+maintainer-scripts = "../maintainer-scripts"
 
 [package.metadata.generate-rpm]
 assets = [
