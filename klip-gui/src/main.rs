@@ -20,7 +20,11 @@ fn default_socket_path() -> PathBuf {
 /// Try to start the daemon if it's not already running.
 fn ensure_daemon_running(socket_path: &PathBuf) {
     if socket_path.exists() {
-        return;
+        if std::os::unix::net::UnixStream::connect(socket_path).is_ok() {
+            return;
+        }
+        eprintln!("[klip-gui] Found stale socket, removing...");
+        let _ = std::fs::remove_file(socket_path);
     }
 
     eprintln!("[klip-gui] Daemon socket not found, starting daemon...");
