@@ -34,8 +34,8 @@ maintainer-scripts = "../maintainer-scripts"
 [package.metadata.generate-rpm]
 assets = [
     { source = "../klipd.service", dest = "/usr/lib/systemd/user/klipd.service" },
-    { source = "../target/release/klipd", dest = "/usr/bin/klipd", mode = 0o755 },
-    { source = "../target/release/klip", dest = "/usr/bin/klip", mode = 0o755 },
+    { source = "../target/release/klipd", dest = "/usr/bin/klipd", mode = "755" },
+    { source = "../target/release/klip", dest = "/usr/bin/klip", mode = "755" },
     { source = "../icons/klip-48.png", dest = "/usr/share/icons/hicolor/48x48/apps/klip.png" },
     { source = "../icons/klip-128.png", dest = "/usr/share/icons/hicolor/128x128/apps/klip.png" },
     { source = "../icons/klip.png", dest = "/usr/share/icons/hicolor/256x256/apps/klip.png" },
