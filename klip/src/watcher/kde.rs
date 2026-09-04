@@ -20,13 +20,18 @@ pub fn try_watch(tx: Sender<ClipEntry>) -> Result<()> {
             "org.freedesktop.DBus.NameHasOwner",
             "string:org.kde.klipper",
         ])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+        .output();
+        
     match check {
-        Ok(s) if s.success() => {}
+        Ok(output) if output.status.success() => {
+            let reply = String::from_utf8_lossy(&output.stdout);
+            if !reply.contains("boolean true") {
+                log::debug!("KDE Klipper is not running (NameHasOwner returned false)");
+                return Err(anyhow::anyhow!("Klipper not available"));
+            }
+        }
         _ => {
-            log::debug!("KDE Klipper not running or dbus-send unavailable");
+            log::debug!("dbus-send failed or is unavailable");
             return Err(anyhow::anyhow!("Klipper not available"));
         }
     }
