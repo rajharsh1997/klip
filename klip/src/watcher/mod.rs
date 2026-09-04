@@ -1,4 +1,4 @@
-pub mod kde;
+pub mod wayland_dc;
 pub mod fallback;
 pub mod x11;
 
@@ -24,22 +24,22 @@ pub fn detect_backend() -> Backend {
 
 /// Start watching the clipboard for changes.
 /// Dispatches to the appropriate backend:
-/// - KDE: event-driven D-Bus signals (zero CPU)
-/// - GNOME/other Wayland: polling via wl-paste --list-types
-/// - X11: selection owner tracking via x11rb
+/// - Wayland: `zwlr_data_control_v1` (KDE, GNOME ≥ 43, Sway, Hyprland) — event-driven, zero CPU
+/// - Wayland fallback: `wl-paste` polling (GNOME < 43 / Ubuntu 22.04)
+/// - X11: XFixes `SelectSelectionInput` — event-driven, zero CPU
 ///
-/// Override via `KLIP_WATCHER=kde|gnome|x11` env var for testing.
+/// Override via `KLIP_WATCHER=wayland|gnome|x11` env var for testing.
 pub fn start_watcher(tx: Sender<ClipEntry>) -> Result<()> {
     // Allow env override for testing
     if let Ok(override_val) = std::env::var("KLIP_WATCHER") {
         match override_val.to_lowercase().as_str() {
-            "kde" => {
-                log::info!("KLIP_WATCHER=kde forced — trying KDE D-Bus");
-                if kde::try_watch(tx).is_ok() {
+            "wayland" | "dc" => {
+                log::info!("KLIP_WATCHER=wayland forced — trying zwlr_data_control_v1");
+                if wayland_dc::try_watch(tx).is_ok() {
                     return Ok(());
                 }
-                log::warn!("KDE D-Bus failed despite KLIP_WATCHER=kde");
-                return Err(anyhow::anyhow!("KDE D-Bus not available"));
+                log::warn!("zwlr_data_control_v1 failed despite KLIP_WATCHER=wayland");
+                return Err(anyhow::anyhow!("zwlr_data_control_v1 not available"));
             }
             "gnome" | "fallback" => {
                 log::info!("KLIP_WATCHER={} forced — using polling fallback", override_val);
@@ -60,11 +60,12 @@ pub fn start_watcher(tx: Sender<ClipEntry>) -> Result<()> {
 
     match backend {
         Backend::Wayland => {
-            // Try KDE D-Bus first (event-driven, zero CPU)
-            if kde::try_watch(tx.clone()).is_ok() {
+            // Try zwlr_data_control_v1 first — works on KDE, GNOME 43+, Sway, Hyprland
+            if wayland_dc::try_watch(tx.clone()).is_ok() {
                 return Ok(());
             }
-            log::info!("KDE D-Bus not available, using polling fallback");
+            // Fallback: polling for GNOME < 43 (Ubuntu 22.04) which lacks the protocol
+            log::info!("zwlr_data_control_v1 not available, using polling fallback (GNOME < 43)");
             fallback::start_watch(tx)
         }
         Backend::X11 => x11::start_watch(tx),
@@ -150,14 +151,67 @@ fn read_wl_paste_timeout(args: &[&str]) -> Option<String> {
     }
 }
 
-/// Build a ClipEntry from text content (used by all backends).
+/// Build a ClipEntry from text content with automatic type detection.
 pub fn make_entry(content: String) -> ClipEntry {
+    let mime_type = detect_content_type(&content);
     ClipEntry {
         id: 0,
         content,
-        mime_type: "text/plain".into(),
+        mime_type,
         pinned: false,
         created_at: String::new(),
         updated_at: String::new(),
     }
+}
+
+/// Detect the semantic type of clipboard content.
+///
+/// Returns a mime-type-like string used by the GUI to show icons:
+///   text/uri-list  → URL
+///   text/x-email   → email address
+///   text/x-path    → file system path
+///   text/x-color   → hex color code
+///   text/x-code    → code snippet
+///   text/plain     → everything else
+pub fn detect_content_type(content: &str) -> String {
+    let t = content.trim();
+
+    // URL
+    if t.starts_with("http://") || t.starts_with("https://") || t.starts_with("ftp://") {
+        return "text/uri-list".into();
+    }
+
+    // Email: single token containing @ with a dot in the domain
+    if !t.contains(' ') && !t.contains('\n') {
+        if let Some(pos) = t.find('@') {
+            let after = &t[pos + 1..];
+            if !after.is_empty() && after.contains('.') && !after.starts_with('.') {
+                return "text/x-email".into();
+            }
+        }
+    }
+
+    // Hex color: #RGB, #RRGGBB, #RRGGBBAA
+    if !t.contains(' ') && !t.contains('\n') && t.starts_with('#') {
+        let hex = &t[1..];
+        if matches!(hex.len(), 3 | 6 | 8) && hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return "text/x-color".into();
+        }
+    }
+
+    // File path: starts with / or ~/
+    if !t.contains('\n') && (t.starts_with('/') || t.starts_with("~/")) {
+        return "text/x-path".into();
+    }
+
+    // Code: indented multi-line or common code tokens
+    let has_indent = t.lines().skip(1).any(|l| l.starts_with("    ") || l.starts_with('\t'));
+    let has_code = ["() {", "fn ", "def ", "class ", "import ", "const ", "let ",
+                    " => ", "};", "return ", "if (", "for ("]
+        .iter().any(|tok| t.contains(tok));
+    if has_indent || has_code {
+        return "text/x-code".into();
+    }
+
+    "text/plain".into()
 }

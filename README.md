@@ -21,10 +21,10 @@ A keyboard-driven clipboard manager for Linux, inspired by Maccy but built nativ
 └─────────────┘                      │                              │
                                      │  ┌────────────────────────┐  │
                                      │  │    Clipboard Watcher   │  │
-                                     │  │  ┌──────┐┌──────┐┌──┐ │  │
-                                     │  │  │ KDE  ││GNOME ││X11│ │  │
-                                     │  │  │ D-Bus││Poll  ││   │ │  │
-                                     │  │  └──────┘└──────┘└──┘ │  │
+                                     │  │  ┌──────────┐ ┌──────┐ │  │
+                                     │  │  │ Wayland  │ │ X11  │ │  │
+                                     │  │  │data-ctrl │ │XFixes│ │  │
+                                     │  │  └──────────┘ └──────┘ │  │
                                      │  └──────────┬─────────────┘  │
                                      │             ▼                │
                                      │  ┌────────────────────────┐  │
@@ -38,42 +38,27 @@ A keyboard-driven clipboard manager for Linux, inspired by Maccy but built nativ
 
 ## Clipboard Watcher Backends
 
-Klip supports multiple clipboard monitoring strategies, automatically selecting the best one for your desktop:
+Klip automatically selects the best event-driven backend for your desktop:
 
-| Backend | Desktop | Method | CPU Usage | Latency |
-|---------|---------|--------|-----------|---------|
-| **KDE D-Bus** | KDE Plasma | Listens for Klipper `clipboardHistoryUpdated` signal via `dbus-monitor` | Zero (event-driven) | Instant |
-| **GNOME/Other** | GNOME, Sway, wlroots | Polls `wl-paste --list-types` every 5s for MIME type changes, reads text only when types change | Minimal (5s interval, no data transfer) | ~5s |
-| **X11** | X11/XWayland | Tracks clipboard selection owner changes via `x11rb` | Event-driven | Instant |
+| Backend | Desktop | Method | CPU (idle) | Latency |
+|---------|---------|--------|------------|---------|
+| **zwlr_data_control_v1** | KDE Plasma, GNOME ≥ 43, Sway, Hyprland | Compositor push via Wayland data-control protocol — no subprocess, no polling | **0%** | Instant |
+| **wl-paste polling** | GNOME < 43 (Ubuntu 22.04) | Polls `wl-paste --list-types` every 5s | Minimal | ~5s |
+| **XFixes (X11)** | Any X11 session | `XFixesSelectSelectionInput` — X server pushes event on owner change | **0%** | Instant |
 
 ### Testing Backends
 
 You can force a specific backend using the `KLIP_WATCHER` environment variable:
 
 ```bash
-# Test KDE backend (requires Klipper running)
-KLIP_WATCHER=kde klipd
+# Force zwlr_data_control_v1 (Wayland)
+KLIP_WATCHER=wayland klipd
 
-# Test GNOME/fallback polling backend
+# Force polling fallback
 KLIP_WATCHER=gnome klipd
 
-# Test X11 backend
+# Force X11 XFixes
 KLIP_WATCHER=x11 klipd
-```
-
-Or use the test script:
-
-```bash
-# Test all backends
-./test-backend.sh all
-
-# Test a specific backend
-./test-backend.sh kde
-./test-backend.sh gnome
-./test-backend.sh x11
-
-# Watch daemon logs with debug output
-./test-backend.sh watch
 ```
 
 ## Quick Start
@@ -191,10 +176,10 @@ klip/
 │   │   ├── main.rs          # Entry point
 │   │   ├── storage.rs       # SQLite storage engine
 │   │   ├── watcher/         # Clipboard watcher (multi-backend)
-│   │   │   ├── mod.rs       # Dispatcher & shared utilities
-│   │   │   ├── kde.rs       # KDE D-Bus event-driven backend
-│   │   │   ├── fallback.rs  # GNOME/other polling backend
-│   │   │   └── x11.rs       # X11 selection tracking backend
+│   │   │   ├── mod.rs          # Dispatcher & shared utilities
+│   │   │   ├── wayland_dc.rs   # Wayland zwlr_data_control_v1 (primary)
+│   │   │   ├── fallback.rs     # wl-paste polling (GNOME < 43 fallback)
+│   │   │   └── x11.rs          # X11 XFixes event-driven backend
 │   │   └── ipc.rs           # Unix socket IPC server
 ├── klip-gui/        # GTK4 floating palette (produces klip binary)
 │   ├── src/

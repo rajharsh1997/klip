@@ -74,22 +74,20 @@ fn ensure_daemon_running(socket_path: &PathBuf) {
 }
 
 fn main() -> glib::ExitCode {
-    // KDE Plasma Wayland: GTK4 native Wayland backend doesn't receive an XDG
-    // activation token when launched from a shortcut/terminal, so the compositor
-    // never raises the window. Force XWayland which works correctly on KDE.
-    if std::env::var("GDK_BACKEND").is_err() {
-        std::env::set_var("GDK_BACKEND", "x11");
-    }
-
     let app = gtk4::Application::new(
         Some("com.klip.clipboard-manager"),
-        gio::ApplicationFlags::NON_UNIQUE,
+        gio::ApplicationFlags::empty(),
     );
 
     app.connect_activate(|app| {
         let socket_path = default_socket_path();
         ensure_daemon_running(&socket_path);
-        build_ui(app, socket_path);
+        if let Some(win) = app.active_window() {
+            let ts = (glib::monotonic_time() / 1000) as u32;
+            win.present_with_time(ts);
+        } else {
+            build_ui(app, socket_path);
+        }
     });
 
     app.run()
@@ -99,17 +97,39 @@ fn build_ui(app: &gtk4::Application, socket_path: PathBuf) {
     // ── Window ────────────────────────────────────────────────────────────────
     let window = gtk4::ApplicationWindow::new(app);
     window.set_title(Some("Klip"));
-    window.set_default_size(460, 520);
-    window.set_resizable(true);
-    window.set_decorated(true);
+    window.set_default_size(320, 480);
+    window.set_resizable(false);
+    window.set_decorated(false);
+    window.add_css_class("klip-popup");
     window.set_icon_name(Some("klip"));
 
-    // Quit the app loop when the window is closed
-    let app_for_close = app.clone();
-    window.connect_close_request(move |_| {
-        app_for_close.quit();
-        glib::Propagation::Proceed
+    // Hide instead of quit when the window is closed
+    window.connect_close_request(move |w| {
+        w.hide();
+        glib::Propagation::Stop
     });
+
+    // Auto-dismiss on focus loss with a small debounce to ignore compositor mapping glitches
+    window.connect_is_active_notify(move |w| {
+        if !w.is_active() && w.is_visible() {
+            let win = w.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
+                if !win.is_active() && win.is_visible() {
+                    win.hide();
+                }
+            });
+        }
+    });
+
+    // Wayland positioning
+    if std::env::var("WAYLAND_DISPLAY").is_ok() || std::env::var("XDG_SESSION_TYPE").map(|s| s == "wayland").unwrap_or(false) {
+        use gtk4_layer_shell::{Layer, Edge, LayerShell, KeyboardMode};
+        window.init_layer_shell();
+        window.set_layer(Layer::Overlay);
+        window.set_anchor(Edge::Top, true);
+        window.set_margin(Edge::Top, 8);
+        window.set_keyboard_mode(KeyboardMode::Exclusive);
+    }
 
     // ── CSS ───────────────────────────────────────────────────────────────────
     let css = gtk4::CssProvider::new();
@@ -154,12 +174,33 @@ fn build_ui(app: &gtk4::Application, socket_path: PathBuf) {
         while let Some(child) = list_box.first_child() {
             list_box.remove(&child);
         }
-        match client::list_entries(query, socket_path) {
-            Ok(mut fetched) => {
-                fetched.sort_by(|a, b| {
-                    b.pinned.cmp(&a.pinned)
-                        .then_with(|| b.updated_at.cmp(&a.updated_at))
+        match client::list_entries(None, socket_path) {
+            Ok(fetched) => {
+                let mut scored: Vec<(u32, ClipEntry)> = if let Some(q) = query.filter(|s| !s.is_empty()) {
+                    let mut matcher = nucleo::Matcher::new(nucleo::Config::DEFAULT);
+                    let mut pattern = nucleo::pattern::Pattern::new(
+                        q,
+                        nucleo::pattern::CaseMatching::Smart,
+                        nucleo::pattern::Normalization::Smart,
+                        nucleo::pattern::AtomKind::Fuzzy,
+                    );
+                    fetched.into_iter()
+                        .filter_map(|e| {
+                            let mut buf = nucleo::Utf32String::from(e.content.as_str());
+                            pattern.score(buf.slice(..), &mut matcher).map(|s| (s, e))
+                        })
+                        .collect()
+                } else {
+                    fetched.into_iter().map(|e| (0, e)).collect()
+                };
+
+                scored.sort_by(|a, b| {
+                    b.1.pinned.cmp(&a.1.pinned)
+                        .then_with(|| b.0.cmp(&a.0))
+                        .then_with(|| b.1.updated_at.cmp(&a.1.updated_at))
                 });
+                
+                let fetched: Vec<ClipEntry> = scored.into_iter().map(|(_, e)| e).collect();
                 *entries.borrow_mut() = fetched.clone();
                 let has_pinned = fetched.iter().any(|e| e.pinned);
                 let has_history = fetched.iter().any(|e| !e.pinned);
@@ -187,8 +228,6 @@ fn build_ui(app: &gtk4::Application, socket_path: PathBuf) {
             }
         }
     }
-
-    refresh_list(None, &entries, &list_box, &socket_path);
 
     // ── Search (debounced to prevent flicker) ────────────────────────────────
     {
@@ -222,10 +261,10 @@ fn build_ui(app: &gtk4::Application, socket_path: PathBuf) {
         let window_esc = window.clone();
         let socket_path = socket_path.clone();
         let ctrl = gtk4::EventControllerKey::new();
-        ctrl.set_propagation_phase(gtk4::PropagationPhase::Bubble);
+        ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
         ctrl.connect_key_pressed(move |_, keyval, _, state| {
             if keyval == gdk::Key::Escape {
-                window_esc.close();
+                window_esc.hide();
                 return glib::Propagation::Stop;
             }
             if keyval == gdk::Key::BackSpace
@@ -259,7 +298,7 @@ fn build_ui(app: &gtk4::Application, socket_path: PathBuf) {
                 let ents = entries.borrow();
                 if idx < ents.len() {
                     let _ = client::copy_entry(ents[idx].id, &socket_path);
-                    window_digit.close();
+                    window_digit.hide();
                 }
                 return glib::Propagation::Stop;
             }
@@ -278,7 +317,7 @@ fn build_ui(app: &gtk4::Application, socket_path: PathBuf) {
             if let Ok(id) = row.widget_name().parse::<i64>() {
                 if let Some(entry) = ents.iter().find(|e| e.id == id) {
                     let _ = client::copy_entry(entry.id, &socket_path);
-                    window.close();
+                    window.hide();
                 }
             }
         });
@@ -292,7 +331,12 @@ fn build_ui(app: &gtk4::Application, socket_path: PathBuf) {
 
     // Grab keyboard focus once the window is actually on screen
     let se = search_entry.clone();
+    let entries_map = entries.clone();
+    let list_map = list_box.clone();
+    let sp_map = socket_path.clone();
     window.connect_map(move |_| {
+        se.set_text(""); 
+        refresh_list(None, &entries_map, &list_map, &sp_map);
         se.grab_focus();
     });
 }
@@ -312,11 +356,8 @@ fn create_entry_row(entry: &ClipEntry, index: usize) -> gtk4::ListBoxRow {
     row.set_widget_name(&entry.id.to_string());
     row.add_css_class("clip-row");
 
-    let hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
-    hbox.set_margin_start(12);
-    hbox.set_margin_end(12);
-    hbox.set_margin_top(8);
-    hbox.set_margin_bottom(8);
+    let hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    hbox.add_css_class("row-hbox");
 
     if entry.pinned {
         let icon = gtk4::Image::from_icon_name("pin-symbolic");
@@ -330,6 +371,20 @@ fn create_entry_row(entry: &ClipEntry, index: usize) -> gtk4::ListBoxRow {
         hbox.append(&badge);
     }
 
+    let type_icon_str = match entry.mime_type.as_str() {
+        t if t.contains("url")   => "🔗",
+        t if t.contains("email") => "✉",
+        t if t.contains("code")  => "</>",
+        t if t.contains("path")  => "📁",
+        t if t.contains("color") => "⬛",
+        _                        => "  ",
+    };
+    if type_icon_str != "  " {
+        let t_icon = gtk4::Label::new(Some(type_icon_str));
+        t_icon.add_css_class("type-icon");
+        hbox.append(&t_icon);
+    }
+
     // Show first line only, truncated
     let content = entry.content.lines().next().unwrap_or("").to_string();
     let content = if content.len() > 120 {
@@ -341,10 +396,28 @@ fn create_entry_row(entry: &ClipEntry, index: usize) -> gtk4::ListBoxRow {
     label.set_halign(gtk4::Align::Start);
     label.set_hexpand(true);
     label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-    label.set_max_width_chars(50);
+    label.set_max_width_chars(35);
     label.add_css_class("clip-content");
-    hbox.append(&label);
+    
+    if entry.mime_type.contains("code") {
+        label.add_css_class("code");
+    } else if entry.mime_type.contains("url") {
+        label.add_css_class("url");
+    }
+    
+    label.set_has_tooltip(true);
+    let full_content = entry.content.clone();
+    label.connect_query_tooltip(move |_, _, _, _, tooltip| {
+        let text = if full_content.len() > 1000 {
+            format!("{}...\n(truncated)", &full_content[..1000])
+        } else {
+            full_content.clone()
+        };
+        tooltip.set_text(Some(&text));
+        true
+    });
 
+    hbox.append(&label);
     row.set_child(Some(&hbox));
     row
 }

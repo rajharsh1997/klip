@@ -16,7 +16,7 @@ path = "src/main.rs"
 
 [package.metadata.deb]
 maintainer = "Harsh Raj <harsh@example.com>"
-extended-description = "Background daemon for Klip clipboard manager. Monitors clipboard changes via D-Bus (KDE), polling (GNOME), or X11, and stores history in SQLite."
+extended-description = "Background daemon for Klip clipboard manager. Monitors clipboard changes via zwlr_data_control_v1 (Wayland: KDE, GNOME 43+, Sway, Hyprland) or XFixes (X11) — fully event-driven, zero CPU when idle. Stores history in SQLite."
 depends = "$auto, wl-clipboard"
 section = "utils"
 priority = "optional"
@@ -44,7 +44,10 @@ assets = [
 [dependencies]
 klip-common = { path = "../klip-common" }
 rusqlite = { version = "0.31", features = ["bundled"] }
-x11rb = "0.13"
+x11rb = { version = "0.13", features = ["xfixes"] }
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.2", features = ["client"] }
+libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = "0.4"

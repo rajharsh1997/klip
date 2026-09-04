@@ -1,73 +1,164 @@
-.main-box {
-    background-color: #2e2e2e;
-    border-radius: 12px;
-    border: 1px solid #555555;
+/* ── Klip — Dark Glass Theme ─────────────────────────────────────────────── */
+
+/* Import Inter from Google Fonts (falls back to system sans-serif gracefully) */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+
+* {
+    font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif;
 }
 
-.search-entry {
-    margin: 8px;
-    margin-bottom: 0;
-    border-radius: 8px;
-    font-size: 14px;
+/* ── Window / Popup container ─────────────────────────────────────────────── */
+
+window {
+    background: transparent;
 }
+
+.main-box {
+    background: rgba(16, 16, 22, 0.96);
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.5),
+        0 20px 60px rgba(0, 0, 0, 0.7),
+        0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+/* ── Search bar ───────────────────────────────────────────────────────────── */
+
+.search-entry {
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 14px 14px 0 0;
+    padding: 11px 14px;
+    font-size: 13px;
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.9);
+    caret-color: #6e9fff;
+    box-shadow: none;
+    outline: none;
+    margin: 0;
+}
+
+.search-entry:focus {
+    background: transparent;
+    border-bottom: 1px solid rgba(110, 159, 255, 0.3);
+    box-shadow: none;
+    outline: none;
+}
+
+/* Remove the default search icon padding */
+.search-entry > text {
+    padding: 0;
+}
+
+/* ── Clip list ────────────────────────────────────────────────────────────── */
 
 .clip-list {
     background: transparent;
-}
-
-.clip-row {
-    background: transparent;
-    border-radius: 6px;
-    margin: 2px 6px;
-    padding: 2px 0;
-}
-
-.clip-row:hover {
-    background-color: rgba(61, 174, 233, 0.2);
-}
-
-.clip-row:selected {
-    background-color: rgba(61, 174, 233, 0.35);
-}
-
-.clip-content {
-    font-family: monospace;
-    font-size: 13px;
-    color: #ffffff;
-}
-
-.section-header {
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: rgba(255, 255, 255, 0.5);
     padding: 4px 0;
 }
 
-.badge {
-    min-width: 20px;
-    min-height: 20px;
-    border-radius: 10px;
-    background-color: rgba(61, 174, 233, 0.3);
-    color: #ffffff;
-    font-size: 11px;
-    font-weight: 700;
-    padding: 2px 6px;
-    margin-right: 6px;
+/* ── Individual clip row ──────────────────────────────────────────────────── */
+
+.clip-row {
+    background: transparent;
+    border-radius: 7px;
+    margin: 1px 5px;
+    padding: 0;
+    transition: background 100ms ease;
+    min-height: 0;
 }
 
-.pin-icon {
-    color: #3dade9;
+.clip-row:hover {
+    background: rgba(255, 255, 255, 0.07);
+}
+
+.clip-row:selected,
+.clip-row:focus {
+    background: rgba(110, 159, 255, 0.18);
+    outline: none;
+}
+
+/* Row content hbox */
+.row-hbox {
+    padding: 7px 10px;
+}
+
+/* ── Type icon ────────────────────────────────────────────────────────────── */
+
+.type-icon {
+    font-size: 11px;
+    min-width: 18px;
+    color: rgba(255, 255, 255, 0.35);
     margin-right: 4px;
 }
 
-.empty-label {
-    font-size: 14px;
-    color: rgba(255, 255, 255, 0.4);
+/* ── Number badge ─────────────────────────────────────────────────────────── */
+
+.badge {
+    font-size: 10px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.28);
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 4px;
+    padding: 1px 5px;
+    min-width: 16px;
+    min-height: 0;
+    margin-right: 7px;
 }
 
+/* ── Clip text content ────────────────────────────────────────────────────── */
+
+.clip-content {
+    font-size: 13px;
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.85);
+    letter-spacing: 0;
+}
+
+/* Monospace for code snippets */
+.clip-content.code {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-size: 12px;
+    color: rgba(160, 215, 160, 0.9);
+}
+
+/* URLs get a link-ish color */
+.clip-content.url {
+    color: rgba(110, 159, 255, 0.9);
+}
+
+/* ── Pin icon ─────────────────────────────────────────────────────────────── */
+
+.pin-icon {
+    color: rgba(255, 200, 80, 0.7);
+    margin-right: 5px;
+}
+
+/* ── Section headers (Pinned / History) ───────────────────────────────────── */
+
+.section-header {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    color: rgba(255, 255, 255, 0.25);
+    padding: 6px 0 2px 0;
+    margin-left: 14px;
+}
+
+/* ── Empty state ──────────────────────────────────────────────────────────── */
+
+.empty-label {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.25);
+    padding: 20px 0;
+}
+
+/* ── Error state ──────────────────────────────────────────────────────────── */
+
 .error-label {
-    font-size: 14px;
-    color: #ff4444;
+    font-size: 12px;
+    color: rgba(255, 100, 100, 0.8);
+    padding: 16px 12px;
 }
