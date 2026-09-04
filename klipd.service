@@ -5,9 +5,11 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/klipd
+ExecStart=/usr/local/bin/klipd
 Restart=on-failure
 RestartSec=2
+# Forward display server environment so the clipboard watcher can connect
+PassEnvironment=DISPLAY WAYLAND_DISPLAY XDG_SESSION_TYPE DBUS_SESSION_BUS_ADDRESS
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target
