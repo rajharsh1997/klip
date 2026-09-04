@@ -23,16 +23,27 @@ pub fn try_watch(tx: Sender<ClipEntry>) -> Result<()> {
         .output();
         
     match check {
-        Ok(output) if output.status.success() => {
-            let reply = String::from_utf8_lossy(&output.stdout);
-            if !reply.contains("boolean true") {
-                log::debug!("KDE Klipper is not running (NameHasOwner returned false)");
-                return Err(anyhow::anyhow!("Klipper not available"));
+        Ok(output) => match output.status.success() {
+            true => {
+                let reply = String::from_utf8_lossy(&output.stdout);
+                match reply.contains("boolean true") {
+                    true => {
+                        // Klipper is running, proceed to spawn dbus-monitor
+                    }
+                    false => {
+                        log::debug!("KDE Klipper is not running (NameHasOwner returned false)");
+                        return Err(anyhow::anyhow!("Klipper not available"));
+                    }
+                }
             }
-        }
-        _ => {
-            log::debug!("dbus-send failed or is unavailable");
-            return Err(anyhow::anyhow!("Klipper not available"));
+            false => {
+                log::debug!("dbus-send command returned an error status");
+                return Err(anyhow::anyhow!("dbus-send failed"));
+            }
+        },
+        Err(e) => {
+            log::debug!("Failed to execute dbus-send: {}", e);
+            return Err(anyhow::anyhow!("dbus-send unavailable"));
         }
     }
 
