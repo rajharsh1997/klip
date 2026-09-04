@@ -162,3 +162,19 @@ window {
     color: rgba(255, 100, 100, 0.8);
     padding: 16px 12px;
 }
+
+.transparent-row {
+    background-color: transparent;
+    background: none;
+    box-shadow: none;
+    border: none;
+}
+.transparent-row:hover,
+.transparent-row:selected,
+.transparent-row:focus {
+    background-color: transparent;
+    background: none;
+    box-shadow: none;
+    border: none;
+    outline: none;
+}

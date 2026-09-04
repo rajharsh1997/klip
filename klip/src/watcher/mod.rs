@@ -1,6 +1,7 @@
 pub mod wayland_dc;
 pub mod fallback;
 pub mod x11;
+pub mod kde;
 
 use anyhow::Result;
 use klip_common::ClipEntry;
@@ -60,7 +61,11 @@ pub fn start_watcher(tx: Sender<ClipEntry>) -> Result<()> {
 
     match backend {
         Backend::Wayland => {
-            // Try zwlr_data_control_v1 first — works on KDE, GNOME 43+, Sway, Hyprland
+            // Try KDE Klipper D-Bus first (best support for KDE Plasma Wayland)
+            if kde::try_watch(tx.clone()).is_ok() {
+                return Ok(());
+            }
+            // Try zwlr_data_control_v1 next — works on GNOME 43+, Sway, Hyprland
             if wayland_dc::try_watch(tx.clone()).is_ok() {
                 return Ok(());
             }

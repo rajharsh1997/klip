@@ -18,3 +18,5 @@ log = "0.4"
 anyhow = "1"
 gtk4-layer-shell = "0.4"
 nucleo = "0.4"
+ksni = { version = "0.3.6", features = ["blocking"] }
+async-channel = "2.5.0"
