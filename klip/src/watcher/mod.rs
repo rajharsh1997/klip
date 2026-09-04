@@ -69,8 +69,16 @@ pub fn start_watcher(tx: Sender<ClipEntry>) -> Result<()> {
             if wayland_dc::try_watch(tx.clone()).is_ok() {
                 return Ok(());
             }
-            // Fallback: polling for GNOME < 43 (Ubuntu 22.04) which lacks the protocol
-            log::info!("zwlr_data_control_v1 not available, using polling fallback (GNOME < 43)");
+            // Fallback 1: Try X11 (XWayland) which bypasses GNOME's strict Wayland restrictions.
+            // Mutter automatically syncs the Wayland clipboard to the X11 clipboard, allowing
+            // XFixes to capture it perfectly in the background with zero CPU!
+            if x11::start_watch(tx.clone()).is_ok() {
+                log::info!("zwlr_data_control_v1 not available, but XWayland fallback succeeded");
+                return Ok(());
+            }
+
+            // Fallback 2: polling (only if XWayland is completely disabled)
+            log::info!("zwlr_data_control_v1 and X11 not available, using polling fallback");
             fallback::start_watch(tx)
         }
         Backend::X11 => x11::start_watch(tx),
