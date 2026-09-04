@@ -197,15 +197,8 @@ fn build_ui(app: &gtk4::Application, socket_path: PathBuf) {
         }
     });
 
-    // Wayland positioning
-    if std::env::var("WAYLAND_DISPLAY").is_ok() || std::env::var("XDG_SESSION_TYPE").map(|s| s == "wayland").unwrap_or(false) {
-        use gtk4_layer_shell::{Layer, Edge, LayerShell, KeyboardMode};
-        window.init_layer_shell();
-        window.set_layer(Layer::Overlay);
-        window.set_anchor(Edge::Top, true);
-        window.set_margin(Edge::Top, 8);
-        window.set_keyboard_mode(KeyboardMode::Exclusive); // Initial state, will be managed by toggles
-    }
+    // Removed Wayland layer-shell initialization because it causes focus-stealing bugs
+    // The window will now behave as a standard GTK floating window centered on the screen.
 
     // ── CSS ───────────────────────────────────────────────────────────────────
     let css = gtk4::CssProvider::new();
