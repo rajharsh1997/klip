@@ -42,9 +42,10 @@ Klip automatically selects the best event-driven backend for your desktop:
 
 | Backend | Desktop | Method | CPU (idle) | Latency |
 |---------|---------|--------|------------|---------|
-| **zwlr_data_control_v1** | KDE Plasma, GNOME ≥ 43, Sway, Hyprland | Compositor push via Wayland data-control protocol — no subprocess, no polling | **0%** | Instant |
+| **KDE D-Bus** | KDE Plasma | D-Bus signals via `org.kde.klipper` | **0%** | Instant |
+| **zwlr_data_control_v1** | GNOME ≥ 43, Sway, Hyprland | Compositor push via Wayland data-control protocol | **0%** | Instant |
 | **wl-paste polling** | GNOME < 43 (Ubuntu 22.04) | Polls `wl-paste --list-types` every 5s | Minimal | ~5s |
-| **XFixes (X11)** | Any X11 session | `XFixesSelectSelectionInput` — X server pushes event on owner change | **0%** | Instant |
+| **XFixes (X11)** | Any X11 session | `XFixesSelectSelectionInput` — X server pushes event | **0%** | Instant |
 
 ### Testing Backends
 
@@ -177,7 +178,8 @@ klip/
 │   │   ├── storage.rs       # SQLite storage engine
 │   │   ├── watcher/         # Clipboard watcher (multi-backend)
 │   │   │   ├── mod.rs          # Dispatcher & shared utilities
-│   │   │   ├── wayland_dc.rs   # Wayland zwlr_data_control_v1 (primary)
+│   │   │   ├── kde.rs          # KDE Klipper D-Bus watcher
+│   │   │   ├── wayland_dc.rs   # Wayland zwlr_data_control_v1 (GNOME 43+, Sway)
 │   │   │   ├── fallback.rs     # wl-paste polling (GNOME < 43 fallback)
 │   │   │   └── x11.rs          # X11 XFixes event-driven backend
 │   │   └── ipc.rs           # Unix socket IPC server
