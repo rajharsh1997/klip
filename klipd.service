@@ -5,11 +5,13 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/klipd
+# Bare name: systemd searches /usr/local/bin, /usr/bin, … so this works for
+# both package installs (/usr/bin) and install.sh (/usr/local/bin)
+ExecStart=klipd
 Restart=on-failure
 RestartSec=2
 # Forward display server environment so the clipboard watcher can connect
-PassEnvironment=DISPLAY WAYLAND_DISPLAY XDG_SESSION_TYPE DBUS_SESSION_BUS_ADDRESS
+PassEnvironment=DISPLAY WAYLAND_DISPLAY XAUTHORITY XDG_SESSION_TYPE DBUS_SESSION_BUS_ADDRESS
 
 [Install]
 WantedBy=graphical-session.target

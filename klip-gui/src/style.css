@@ -1,8 +1,5 @@
 /* ── Klip — Dark Glass Theme ─────────────────────────────────────────────── */
 
-/* Import Inter from Google Fonts (falls back to system sans-serif gracefully) */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
-
 * {
     font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif;
 }
@@ -47,9 +44,9 @@ window {
     outline: none;
 }
 
-/* Remove the default search icon padding */
+/* Remove the default padding, but keep a gap between the search icon and the text/cursor */
 .search-entry > text {
-    padding: 0;
+    padding: 0 0 0 8px;
 }
 
 /* ── Clip list ────────────────────────────────────────────────────────────── */

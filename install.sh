@@ -33,7 +33,7 @@ install_local() {
     mkdir -p "$LOCAL_BIN" "$DESKTOP_DIR" "$SERVICE_DIR"
 
     install -Dm755 target/release/klipd "$LOCAL_BIN/klipd"
-    install -Dm755 target/release/klip-gui "$LOCAL_BIN/klip"
+    install -Dm755 target/release/klip "$LOCAL_BIN/klip"
 
     # Install icons to user local
     for size in 48 128; do
@@ -62,7 +62,7 @@ install_local() {
 install_system() {
     echo "  Installing system-wide (/usr/local)..."
     sudo install -Dm755 target/release/klipd "$BIN_DIR/klipd"
-    sudo install -Dm755 target/release/klip-gui "$BIN_DIR/klip"
+    sudo install -Dm755 target/release/klip "$BIN_DIR/klip"
 
     # Install icons to system locations
     for size in 48 128; do

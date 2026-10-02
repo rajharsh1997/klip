@@ -149,14 +149,7 @@ pub fn start_watch(tx: Sender<ClipEntry>) -> Result<()> {
                                         content.len()
                                     );
                                     last_content = Some(content.clone());
-                                    let _ = tx.send(ClipEntry {
-                                        id: 0,
-                                        content,
-                                        mime_type: "text/plain".into(),
-                                        pinned: false,
-                                        created_at: String::new(),
-                                        updated_at: String::new(),
-                                    });
+                                    let _ = tx.send(super::make_entry(content));
                                 }
                             }
                             Ok(_) => {}  // empty property — binary/non-text clip

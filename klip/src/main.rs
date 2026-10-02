@@ -26,6 +26,14 @@ fn main() -> Result<()> {
     let data_dir = default_data_dir();
     std::fs::create_dir_all(&data_dir)?;
 
+    // Single instance: if another daemon is already serving the socket, don't
+    // steal it (two daemons would both record every clip).
+    let socket_path = ipc::socket_path(&data_dir);
+    if std::os::unix::net::UnixStream::connect(&socket_path).is_ok() {
+        log::info!("klipd is already running ({:?}), exiting", socket_path);
+        return Ok(());
+    }
+
     log::info!("Klip daemon starting...");
     log::info!("Data directory: {:?}", data_dir);
 
@@ -60,9 +68,7 @@ fn main() -> Result<()> {
         }
     });
 
-    // Start IPC server
-    let socket_path = ipc::socket_path(&data_dir);
-    // Remove stale socket if present
+    // Start IPC server — any socket file left at this point is stale
     let _ = std::fs::remove_file(&socket_path);
 
     let listener = std::os::unix::net::UnixListener::bind(&socket_path)?;

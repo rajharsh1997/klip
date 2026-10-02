@@ -74,7 +74,7 @@ pub fn try_watch(tx: Sender<ClipEntry>) -> Result<()> {
                 Err(_) => break,
             };
             // clipboardHistoryUpdated signal received — clipboard changed
-            if line.contains("clipboardHistoryUpdated") || line.contains("member=") {
+            if line.contains("member=clipboardHistoryUpdated") {
                 if let Some(content) = super::read_clipboard_wl_paste() {
                     if Some(&content) != last_content.as_ref() {
                         last_content = Some(content.clone());

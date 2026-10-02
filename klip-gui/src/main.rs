@@ -69,36 +69,45 @@ fn default_socket_path() -> PathBuf {
     base.join("klip").join("klip.sock")
 }
 
+fn daemon_alive(socket_path: &PathBuf) -> bool {
+    std::os::unix::net::UnixStream::connect(socket_path).is_ok()
+}
+
+/// Poll for up to 2s until the daemon accepts connections.
+fn wait_for_daemon(socket_path: &PathBuf) -> bool {
+    for _ in 0..20 {
+        if daemon_alive(socket_path) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    false
+}
+
 /// Try to start the daemon if it's not already running.
 fn ensure_daemon_running(socket_path: &PathBuf) {
-    if socket_path.exists() {
-        if std::os::unix::net::UnixStream::connect(socket_path).is_ok() {
-            return;
-        }
-        eprintln!("[klip-gui] Found stale socket, removing...");
-        let _ = std::fs::remove_file(socket_path);
+    if daemon_alive(socket_path) {
+        return;
     }
-
-    eprintln!("[klip-gui] Daemon socket not found, starting daemon...");
+    eprintln!("[klip-gui] Daemon not running, starting it...");
 
     // Try systemd first (preferred — handles lifecycle, auto-restart, etc.)
     let systemd_ok = std::process::Command::new("systemctl")
         .args(["--user", "start", "klipd"])
         .status()
-        .ok()
-        .map(|s| s.success())
-        .unwrap_or(false);
+        .is_ok_and(|s| s.success());
 
+    // `systemctl start` succeeds as soon as the process is forked, even if the
+    // unit then fails (e.g. a wrong ExecStart path) — so verify the socket.
     if systemd_ok {
-        for _ in 0..20 {
-            if socket_path.exists() {
-                eprintln!("[klip-gui] Daemon started via systemd");
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
+        if wait_for_daemon(socket_path) {
+            eprintln!("[klip-gui] Daemon started via systemd");
+            return;
         }
-        eprintln!("[klip-gui] systemd start returned ok but socket not yet visible, proceeding...");
-        return;
+        eprintln!("[klip-gui] systemd unit started but daemon isn't responding, stopping it");
+        let _ = std::process::Command::new("systemctl")
+            .args(["--user", "stop", "klipd"])
+            .status();
     }
 
     // Fallback: spawn daemon directly (non-systemd: static distros, containers, etc.)
@@ -109,23 +118,11 @@ fn ensure_daemon_running(socket_path: &PathBuf) {
         .stdin(std::process::Stdio::null())
         .spawn()
     {
-        Ok(_) => {
-            for _ in 0..20 {
-                if socket_path.exists() {
-                    eprintln!("[klip-gui] Daemon started directly");
-                    return;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-            eprintln!("[klip-gui] Daemon process spawned but socket not yet visible, proceeding...");
-        }
-        Err(e) => {
-            eprintln!("[klip-gui] Could not start daemon: {e}");
-        }
+        Ok(_) if wait_for_daemon(socket_path) => eprintln!("[klip-gui] Daemon started directly"),
+        Ok(_) => eprintln!("[klip-gui] Daemon process spawned but not responding yet, proceeding..."),
+        Err(e) => eprintln!("[klip-gui] Could not start daemon: {e}"),
     }
 }
-
-use gtk4::prelude::*;
 
 fn main() -> glib::ExitCode {
     let app = gtk4::Application::new(
@@ -133,8 +130,12 @@ fn main() -> glib::ExitCode {
         gio::ApplicationFlags::empty(),
     );
 
+    // `startup` only fires in the primary instance. A second `klip` invocation
+    // (e.g. from the global hotkey) just forwards `activate` over D-Bus and exits,
+    // so creating the tray here avoids a temporary duplicate tray icon.
     app.connect_startup(|app| {
         std::mem::forget(app.hold()); // Keeps the GTK application alive in the background even when 0 windows exist
+        spawn_tray(app);
     });
 
     app.connect_activate(|app| {
@@ -148,11 +149,22 @@ fn main() -> glib::ExitCode {
         }
     });
 
+    app.run()
+}
+
+fn spawn_tray(app: &gtk4::Application) {
     let (tx, rx) = async_channel::unbounded();
     let tray = KlipTray { tx };
-    let tray_handle = tray.spawn().unwrap();
-    std::mem::forget(tray_handle);
-    
+    match tray.spawn() {
+        Ok(handle) => std::mem::forget(handle),
+        Err(e) => {
+            // No StatusNotifier host (e.g. stock GNOME without the AppIndicator
+            // extension) — the palette still works via the hotkey.
+            eprintln!("[klip-gui] Tray icon unavailable: {e}");
+            return;
+        }
+    }
+
     let app_clone = app.clone();
     glib::MainContext::default().spawn_local(async move {
         while let Ok(msg) = rx.recv().await {
@@ -171,8 +183,6 @@ fn main() -> glib::ExitCode {
             }
         }
     });
-
-    app.run()
 }
 
 fn build_ui(app: &gtk4::Application, socket_path: PathBuf) {
@@ -263,7 +273,7 @@ fn build_ui(app: &gtk4::Application, socket_path: PathBuf) {
 
         let mut scored: Vec<(u32, ClipEntry)> = if let Some(q) = query.filter(|s| !s.is_empty()) {
             let mut matcher = nucleo::Matcher::new(nucleo::Config::DEFAULT);
-            let mut pattern = nucleo::pattern::Pattern::new(
+            let pattern = nucleo::pattern::Pattern::new(
                 q,
                 nucleo::pattern::CaseMatching::Smart,
                 nucleo::pattern::Normalization::Smart,
@@ -271,7 +281,7 @@ fn build_ui(app: &gtk4::Application, socket_path: PathBuf) {
             );
             fetched.into_iter()
                 .filter_map(|e| {
-                    let mut buf = nucleo::Utf32String::from(e.content.as_str());
+                    let buf = nucleo::Utf32String::from(e.content.as_str());
                     pattern.score(buf.slice(..), &mut matcher).map(|s| (s, e))
                 })
                 .collect()
@@ -346,6 +356,10 @@ fn build_ui(app: &gtk4::Application, socket_path: PathBuf) {
     {
         let window_esc = window.clone();
         let socket_path = socket_path.clone();
+        let all_entries = all_entries.clone();
+        let entries = entries.clone();
+        let list_box = list_box.clone();
+        let search = search_entry.clone();
         let ctrl = gtk4::EventControllerKey::new();
         ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
         ctrl.connect_key_pressed(move |_, keyval, _, state| {
@@ -357,6 +371,9 @@ fn build_ui(app: &gtk4::Application, socket_path: PathBuf) {
                 && state.contains(gdk::ModifierType::CONTROL_MASK)
             {
                 let _ = client::clear_history(&socket_path);
+                *all_entries.borrow_mut() = client::list_entries(None, &socket_path).unwrap_or_default();
+                let q = search.text();
+                refresh_list(Some(q.as_str()).filter(|s| !s.is_empty()), &all_entries, &entries, &list_box);
                 return glib::Propagation::Stop;
             }
             glib::Propagation::Proceed
@@ -364,31 +381,34 @@ fn build_ui(app: &gtk4::Application, socket_path: PathBuf) {
         window.add_controller(ctrl);
     }
 
-    // ── Keyboard: digits 1-9 quick-copy (capture on window, only when search is empty) ─
+    // ── Keyboard: 1-9 quick-copy ──────────────────────────────────────────────
+    // Capture phase: the SearchEntry has focus and would otherwise consume the
+    // digit as search text before the window ever sees it. Plain digits act only
+    // while the search box is empty; Alt+digit works at any time.
     {
         let entries = entries.clone();
         let socket_path = socket_path.clone();
         let window_digit = window.clone();
         let search = search_entry.clone();
         let ctrl = gtk4::EventControllerKey::new();
-        ctrl.connect_key_pressed(move |_, keyval, _, _| {
-            // Only intercept digits when search box is empty (not typing a search)
-            if !search.text().is_empty() {
+        ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
+        ctrl.connect_key_pressed(move |_, keyval, _, state| {
+            let Some(idx) = quick_copy_index(keyval) else {
+                return glib::Propagation::Proceed;
+            };
+            let alt = state.contains(gdk::ModifierType::ALT_MASK);
+            let other_mods = state.intersects(
+                gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SUPER_MASK,
+            );
+            if other_mods || (!alt && !search.text().is_empty()) {
                 return glib::Propagation::Proceed;
             }
-            let v = keyval.into_glib();
-            let lo = gdk::Key::_1.into_glib();
-            let hi = gdk::Key::_9.into_glib();
-            if (lo..=hi).contains(&v) {
-                let idx = (v - lo) as usize;
-                let ents = entries.borrow();
-                if idx < ents.len() {
-                    let _ = client::copy_entry(ents[idx].id, &socket_path);
-                    window_digit.close();
-                }
-                return glib::Propagation::Stop;
+            let ents = entries.borrow();
+            if let Some(entry) = ents.get(idx) {
+                let _ = client::copy_entry(entry.id, &socket_path);
+                window_digit.close();
             }
-            glib::Propagation::Proceed
+            glib::Propagation::Stop
         });
         window.add_controller(ctrl);
     }
@@ -410,7 +430,6 @@ fn build_ui(app: &gtk4::Application, socket_path: PathBuf) {
     }
 
     // ── Show & raise ──────────────────────────────────────────────────────────
-    let ts = (glib::monotonic_time() / 1000) as u32;
     let all_entries_ref = all_entries.clone();
     let entries_ref = entries.clone();
     let list_ref = list_box.clone();
@@ -419,6 +438,23 @@ fn build_ui(app: &gtk4::Application, socket_path: PathBuf) {
     let ts = (glib::monotonic_time() / 1000) as u32;
     window.present_with_time(ts);
     search_entry.grab_focus();
+}
+
+/// Map `1`–`9` (main row or keypad) to a 0-based entry index.
+fn quick_copy_index(keyval: gdk::Key) -> Option<usize> {
+    let v = keyval.into_glib();
+    [(gdk::Key::_1, gdk::Key::_9), (gdk::Key::KP_1, gdk::Key::KP_9)]
+        .into_iter()
+        .find_map(|(lo, hi)| {
+            let (lo, hi) = (lo.into_glib(), hi.into_glib());
+            (lo..=hi).contains(&v).then(|| (v - lo) as usize)
+        })
+}
+
+/// Truncate to at most `max` characters (not bytes — slicing bytes panics on
+/// multi-byte UTF-8 such as emoji or Devanagari).
+fn truncate_chars(s: &str, max: usize) -> Option<&str> {
+    s.char_indices().nth(max).map(|(i, _)| &s[..i])
 }
 
 fn section_label(text: &str) -> gtk4::ListBoxRow {
@@ -472,11 +508,10 @@ fn create_entry_row(entry: &ClipEntry, index: usize) -> gtk4::ListBoxRow {
     }
 
     // Show first line only, truncated
-    let content = entry.content.lines().next().unwrap_or("").to_string();
-    let content = if content.len() > 120 {
-        format!("{}…", &content[..120])
-    } else {
-        content
+    let first_line = entry.content.lines().next().unwrap_or("");
+    let content = match truncate_chars(first_line, 120) {
+        Some(head) => format!("{head}…"),
+        None => first_line.to_string(),
     };
     let label = gtk4::Label::new(Some(&content));
     label.set_halign(gtk4::Align::Start);
@@ -494,10 +529,9 @@ fn create_entry_row(entry: &ClipEntry, index: usize) -> gtk4::ListBoxRow {
     label.set_has_tooltip(true);
     let full_content = entry.content.clone();
     label.connect_query_tooltip(move |_, _, _, _, tooltip| {
-        let text = if full_content.len() > 1000 {
-            format!("{}...\n(truncated)", &full_content[..1000])
-        } else {
-            full_content.clone()
+        let text = match truncate_chars(&full_content, 1000) {
+            Some(head) => format!("{head}...\n(truncated)"),
+            None => full_content.clone(),
         };
         tooltip.set_text(Some(&text));
         true

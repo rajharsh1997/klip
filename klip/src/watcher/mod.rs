@@ -25,22 +25,22 @@ pub fn detect_backend() -> Backend {
 
 /// Start watching the clipboard for changes.
 /// Dispatches to the appropriate backend:
-/// - Wayland: `zwlr_data_control_v1` (KDE, GNOME ≥ 43, Sway, Hyprland) — event-driven, zero CPU
-/// - Wayland fallback: `wl-paste` polling (GNOME < 43 / Ubuntu 22.04)
+/// - Wayland: `ext_data_control_v1` / `zwlr_data_control_v1` (KDE, Sway, Hyprland, …) — event-driven, zero CPU
+/// - Wayland, no data-control: KDE Klipper D-Bus, then XWayland XFixes, then `wl-paste` polling
 /// - X11: XFixes `SelectSelectionInput` — event-driven, zero CPU
 ///
-/// Override via `KLIP_WATCHER=wayland|gnome|x11` env var for testing.
+/// Override via `KLIP_WATCHER=wayland|kde|gnome|x11` env var for testing.
 pub fn start_watcher(tx: Sender<ClipEntry>) -> Result<()> {
     // Allow env override for testing
     if let Ok(override_val) = std::env::var("KLIP_WATCHER") {
         match override_val.to_lowercase().as_str() {
             "wayland" | "dc" => {
-                log::info!("KLIP_WATCHER=wayland forced — trying zwlr_data_control_v1");
-                if wayland_dc::try_watch(tx).is_ok() {
-                    return Ok(());
-                }
-                log::warn!("zwlr_data_control_v1 failed despite KLIP_WATCHER=wayland");
-                return Err(anyhow::anyhow!("zwlr_data_control_v1 not available"));
+                log::info!("KLIP_WATCHER=wayland forced — trying data-control");
+                return wayland_dc::try_watch(tx);
+            }
+            "kde" => {
+                log::info!("KLIP_WATCHER=kde forced");
+                return kde::try_watch(tx);
             }
             "gnome" | "fallback" => {
                 log::info!("KLIP_WATCHER={} forced — using polling fallback", override_val);
@@ -61,27 +61,64 @@ pub fn start_watcher(tx: Sender<ClipEntry>) -> Result<()> {
 
     match backend {
         Backend::Wayland => {
-            // Try KDE Klipper D-Bus first (best support for KDE Plasma Wayland)
+            // Native data-control protocol — the most reliable option where available
+            match wayland_dc::try_watch(tx.clone()) {
+                Ok(()) => return Ok(()),
+                Err(e) => log::info!("Wayland data-control unavailable: {e}"),
+            }
+            // KDE Klipper D-Bus (older Plasma without data-control)
             if kde::try_watch(tx.clone()).is_ok() {
                 return Ok(());
             }
-            // Try zwlr_data_control_v1 next — works on GNOME 43+, Sway, Hyprland
-            if wayland_dc::try_watch(tx.clone()).is_ok() {
-                return Ok(());
-            }
-            // Fallback 1: Try X11 (XWayland) which bypasses GNOME's strict Wayland restrictions.
-            // Mutter automatically syncs the Wayland clipboard to the X11 clipboard, allowing
-            // XFixes to capture it perfectly in the background with zero CPU!
-            if x11::start_watch(tx.clone()).is_ok() {
-                log::info!("zwlr_data_control_v1 not available, but XWayland fallback succeeded");
-                return Ok(());
+            // XWayland XFixes — the GNOME path (Mutter has no data-control).
+            // Mutter mirrors every Wayland clipboard change to X11, so this is
+            // reliable there; KWin only mirrors while an X11 window is focused.
+            ensure_xwayland_auth();
+            match x11::start_watch(tx.clone()) {
+                Ok(()) => {
+                    log::info!("Using XWayland clipboard monitoring");
+                    return Ok(());
+                }
+                Err(e) => log::warn!("XWayland clipboard monitoring unavailable: {e}"),
             }
 
-            // Fallback 2: polling (only if XWayland is completely disabled)
-            log::info!("zwlr_data_control_v1 and X11 not available, using polling fallback");
+            // Last resort: polling — misses copies made less than 5s apart
+            log::warn!("No event-driven clipboard backend available, using polling fallback");
             fallback::start_watch(tx)
         }
         Backend::X11 => x11::start_watch(tx),
+    }
+}
+
+/// Make sure we can authenticate to Xwayland. When klipd runs as a systemd
+/// user service, `DISPLAY`/`XAUTHORITY` may be missing from its environment;
+/// without them the XFixes backend fails and we'd drop to lossy polling.
+/// Compositors keep the Xwayland auth file in `$XDG_RUNTIME_DIR`
+/// (Mutter: `.mutter-Xwaylandauth.*`, KWin: `xauth_*`), so look for it there.
+fn ensure_xwayland_auth() {
+    if std::env::var_os("DISPLAY").is_none() {
+        std::env::set_var("DISPLAY", ":0");
+        log::info!("DISPLAY not set, assuming :0 for XWayland");
+    }
+    if std::env::var_os("XAUTHORITY").is_some() {
+        return;
+    }
+    let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR") else {
+        return;
+    };
+    let newest = std::fs::read_dir(runtime_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with(".mutter-Xwaylandauth.") || name.starts_with("xauth_")
+        })
+        .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
+    if let Some(entry) = newest {
+        log::info!("XAUTHORITY not set, using {:?}", entry.path());
+        std::env::set_var("XAUTHORITY", entry.path());
     }
 }
 
@@ -113,19 +150,21 @@ pub fn clipboard_has_text() -> bool {
     })
 }
 
-/// Try to read clipboard via `wl-paste` command (standard Wayland protocol).
-/// Uses a 1-second timeout to avoid hanging on image/non-text clipboard data.
+/// Try to read clipboard text via the `wl-paste` command.
+/// Uses a timeout to avoid hanging on image/non-text clipboard data.
 pub fn read_clipboard_wl_paste() -> Option<String> {
     if !clipboard_has_text() {
         return None;
     }
-    read_wl_paste_timeout(&["--no-newline"])
-        .or_else(|| read_wl_paste_timeout(&[]))
+    read_wl_paste_timeout(&["--no-newline"]).or_else(|| read_wl_paste_timeout(&[]))
 }
 
-/// Run wl-paste with a 1-second timeout. Returns None if it times out
-/// (e.g. clipboard contains an image) or fails.
+/// Run wl-paste with a 2-second timeout. Returns None if it times out
+/// (e.g. clipboard contains an image), fails, or yields only whitespace.
+/// Content is returned exactly as copied (no trimming).
 fn read_wl_paste_timeout(args: &[&str]) -> Option<String> {
+    use std::io::Read;
+
     let mut child = std::process::Command::new("wl-paste")
         .args(args)
         .stdin(std::process::Stdio::null())
@@ -134,34 +173,28 @@ fn read_wl_paste_timeout(args: &[&str]) -> Option<String> {
         .spawn()
         .ok()?;
 
-    let start = std::time::Instant::now();
-    let timeout = std::time::Duration::from_secs(1);
+    // Drain stdout on a separate thread: a clip larger than the pipe buffer
+    // (64 KB) would otherwise block wl-paste forever and hit the timeout.
+    let mut stdout = child.stdout.take()?;
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = done_tx.send(stdout.read_to_end(&mut buf).map(|_| buf));
+    });
 
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                if status.success() {
-                    use std::io::Read;
-                    let mut output = String::new();
-                    if let Some(mut stdout) = child.stdout.take() {
-                        let _ = stdout.read_to_string(&mut output);
-                    }
-                    let trimmed = output.trim().to_string();
-                    return if trimmed.is_empty() { None } else { Some(trimmed) };
-                }
-                return None;
-            }
-            Ok(None) => {
-                if start.elapsed() >= timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return None;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            Err(_) => return None,
+    let bytes = match done_rx.recv_timeout(std::time::Duration::from_secs(2)) {
+        Ok(Ok(bytes)) => bytes,
+        _ => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
         }
+    };
+    if !child.wait().ok()?.success() {
+        return None;
     }
+    let content = String::from_utf8_lossy(&bytes).into_owned();
+    if content.trim().is_empty() { None } else { Some(content) }
 }
 
 /// Build a ClipEntry from text content with automatic type detection.
