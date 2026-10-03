@@ -131,6 +131,15 @@ struct KlipTray {
     /// `None` while the daemon is unreachable.
     status: Option<Status>,
     autostart: bool,
+    /// Flipped whenever the clip rows change; it adds or drops a hidden item at
+    /// the end of the menu. ksni numbers items by position and sends only
+    /// property diffs unless the layout changes, and Plasma mishandles some
+    /// diffs: when a row goes from a thumbnail (icon-data) to a theme icon it
+    /// sets the new icon-name, then applies "icon-data removed" by clearing the
+    /// icon, so the row ends up blank; a separator moving rows isn't applied at
+    /// all. A layout change makes ksni hand out fresh ids, so the panel builds
+    /// every row from scratch.
+    relayout: bool,
 }
 
 impl KlipTray {
@@ -297,6 +306,9 @@ impl Tray for KlipTray {
             }
             .into(),
         );
+        if self.relayout {
+            items.push(StandardItem { visible: false, ..Default::default() }.into());
+        }
         items
     }
 }
@@ -310,6 +322,7 @@ pub fn spawn_tray(app: &gtk4::Application) {
         socket_path: socket_path.clone(),
         status: None,
         autostart: autostart_path().exists(),
+        relayout: false,
     };
     let handle = match tray.spawn() {
         Ok(handle) => handle,
@@ -383,7 +396,19 @@ fn refresh(
             let entries = entries.iter().map(|e| pictures.menu_clip(e)).collect();
             Status { entries, count, paused }
         });
-    handle.update(move |tray| tray.status = status).is_some()
+    handle
+        .update(move |tray| {
+            if clip_rows(&tray.status) != clip_rows(&status) {
+                tray.relayout = !tray.relayout;
+            }
+            tray.status = status;
+        })
+        .is_some()
+}
+
+/// What identifies the menu's clip rows: id, pinned, and thumbnail vs theme icon.
+fn clip_rows(status: &Option<Status>) -> Option<Vec<(i64, bool, bool)>> {
+    status.as_ref().map(|st| st.entries.iter().map(|c| (c.id, c.pinned, c.picture.is_some())).collect())
 }
 
 /// Up to [`MENU_PINNED`] pinned clips, then the most recent ones, [`MENU_CLIPS`]

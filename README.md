@@ -229,4 +229,4 @@ klip/
 
 ## License
 
-MIT
+[MIT](LICENSE)

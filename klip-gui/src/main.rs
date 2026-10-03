@@ -160,22 +160,37 @@ fn build_ui(app: &gtk4::Application, socket_path: PathBuf) {
     window.add_css_class("klip-popup");
     window.set_icon_name(Some("klip"));
 
-    // Auto-dismiss on focus loss with a small debounce to ignore compositor
-    // mapping glitches. Opening the right-click menu can make the window look
-    // inactive (the popup takes keyboard focus), so never dismiss while it's open.
+    // Auto-dismiss once the compositor deactivates the window, with a small
+    // debounce to ignore mapping glitches. This watches the toplevel's FOCUSED
+    // state (xdg "activated"), not `is_active`: the latter also drops while
+    // any popup holds the keyboard, e.g. a panel's tray context menu. Closing
+    // then, while KWin still counts us as the active window, makes it activate
+    // another window, which cancels that menu along with the palette.
+    // Never dismiss while the right-click menu is open either.
     let menu_open = Rc::new(Cell::new(false));
     {
         let menu_open = menu_open.clone();
-        window.connect_is_active_notify(move |w| {
-            if !w.is_active() && w.is_visible() {
-                let win = w.clone();
-                let menu_open = menu_open.clone();
+        window.connect_realize(move |w| {
+            let Some(toplevel) = w.surface().and_downcast::<gdk::Toplevel>() else {
+                return;
+            };
+            let win = w.clone();
+            let menu_open = menu_open.clone();
+            // The window starts unfocused; only a focused → unfocused change counts
+            let was_focused = Cell::new(false);
+            toplevel.connect_state_notify(move |t| {
+                let focused = t.state().contains(gdk::ToplevelState::FOCUSED);
+                if !was_focused.replace(focused) || focused || !win.is_visible() {
+                    return;
+                }
+                let (win, t, menu_open) = (win.clone(), t.clone(), menu_open.clone());
                 glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
-                    if !win.is_active() && win.is_visible() && !menu_open.get() {
+                    let focused = t.state().contains(gdk::ToplevelState::FOCUSED);
+                    if !focused && win.is_visible() && !menu_open.get() {
                         win.close();
                     }
                 });
-            }
+            });
         });
     }
 
