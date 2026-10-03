@@ -152,8 +152,8 @@ install target/release/klip ~/.local/bin/
 rm -f $(which klip) $(which klipd)
 rm -f $HOME/.local/share/applications/klip.desktop
 rm -f $HOME/.config/systemd/user/klipd.service
-rm -f $HOME/.local/share/icons/hicolor/*/apps/klip.png
-sudo rm -f /usr/local/share/icons/hicolor/*/apps/klip.png 2>/dev/null
+rm -f $HOME/.local/share/icons/hicolor/*/apps/klip.{png,svg}
+sudo rm -f /usr/local/share/icons/hicolor/*/apps/klip.{png,svg} 2>/dev/null
 systemctl --user daemon-reload
 ```
 
@@ -220,7 +220,7 @@ klip/
 │   │   ├── client.rs    # IPC client
 │   │   └── style.css    # Styling
 ├── build.sh         # Build script
-├── icons/           # App icons (48x48, 128x128, 256x256)
+├── icons/           # App icon: klip.svg source + 48/128/256 PNGs (original/ = old icon)
 ├── install.sh       # Install script
 ├── klip.desktop     # Desktop entry for app tray / shortcut binding
 ├── klipd.service    # systemd user service (starts klipd)

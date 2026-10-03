@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Klip app icon — ink #1E1A17 · paper #F2E8D5 · accent #1F4FC4 -->
+  <g stroke="#1E1A17" stroke-width="40" stroke-linejoin="round" stroke-linecap="round">
+    <rect x="232" y="196" width="560" height="712" rx="76" fill="#F2E8D5"/>
+    <rect x="372" y="124" width="280" height="128" rx="52" fill="#1F4FC4"/>
+  </g>
+  <rect x="462" y="168" width="100" height="36" rx="18" fill="#1E1A17"/>
+  <path d="M328 380 H696 M328 472 H632 M328 564 H696 M328 656 H496" fill="none" stroke="#1E1A17" stroke-width="32" stroke-linecap="round"/>
+  <path d="M586 646 V818 M687 646 L591 733 M626 698 Q666 738 689 818" fill="none" stroke="#1F4FC4" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

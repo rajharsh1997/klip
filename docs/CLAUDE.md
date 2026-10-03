@@ -106,7 +106,7 @@ Other files:
 
 - Packaging metadata lives in `klip/Cargo.toml`. Both `cargo deb -p klip` and `cargo generate-rpm -p klip` bundle:
   - both binaries
-  - icons (48, 128, 256)
+  - icons (48, 128, 256 PNG plus `scalable/apps/klip.svg`). `icons/klip.svg` is the source; the PNGs are rendered from it with `magick -background none -density 384 icons/klip.svg -resize NxN PNG32:…`. The pre-1.1.3 icon is kept in `icons/original/`.
   - `klip.desktop`
   - `klipd.service` → `/usr/lib/systemd/user/`
 - The deb depends on `$auto, wl-clipboard`. The **RPM declares no `requires`** (no wl-clipboard).

@@ -40,6 +40,7 @@ install_local() {
         install -Dm644 "icons/klip-${size}.png" "${LOCAL_ICON_DIR}/${size}x${size}/apps/klip.png"
     done
     install -Dm644 "icons/klip.png" "${LOCAL_ICON_DIR}/256x256/apps/klip.png"
+    install -Dm644 "icons/klip.svg" "${LOCAL_ICON_DIR}/scalable/apps/klip.svg"
     gtk-update-icon-cache "${LOCAL_ICON_DIR%/*}" 2>/dev/null || true
 
     # Install .desktop file (for app tray & global shortcut binding)
@@ -69,6 +70,7 @@ install_system() {
         sudo install -Dm644 "icons/klip-${size}.png" "${ICON_DIR}/${size}x${size}/apps/klip.png"
     done
     sudo install -Dm644 "icons/klip.png" "${ICON_DIR}/256x256/apps/klip.png"
+    sudo install -Dm644 "icons/klip.svg" "${ICON_DIR}/scalable/apps/klip.svg"
     sudo gtk-update-icon-cache /usr/local/share/icons/hicolor 2>/dev/null || true
 
     # User files (.desktop, service) go to the actual user's home
@@ -107,6 +109,6 @@ echo "  To uninstall:"
 echo "    rm -f \$(which klip) \$(which klipd)"
 echo "    rm -f \$HOME/.local/share/applications/klip.desktop"
 echo "    rm -f \$HOME/.config/systemd/user/klipd.service"
-echo "    rm -f \$HOME/.local/share/icons/hicolor/*/apps/klip.png"
-echo "    sudo rm -f /usr/local/share/icons/hicolor/*/apps/klip.png 2>/dev/null"
+echo "    rm -f \$HOME/.local/share/icons/hicolor/*/apps/klip.{png,svg}"
+echo "    sudo rm -f /usr/local/share/icons/hicolor/*/apps/klip.{png,svg} 2>/dev/null"
 echo "    systemctl --user daemon-reload"

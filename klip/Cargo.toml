@@ -26,6 +26,7 @@ assets = [
     ["../icons/klip-48.png", "usr/share/icons/hicolor/48x48/apps/klip.png", "644"],
     ["../icons/klip-128.png", "usr/share/icons/hicolor/128x128/apps/klip.png", "644"],
     ["../icons/klip.png", "usr/share/icons/hicolor/256x256/apps/klip.png", "644"],
+    ["../icons/klip.svg", "usr/share/icons/hicolor/scalable/apps/klip.svg", "644"],
     ["../klip.desktop", "usr/share/applications/klip.desktop", "644"],
     ["../klipd.service", "usr/lib/systemd/user/klipd.service", "644"],
 ]
@@ -47,6 +48,7 @@ assets = [
     { source = "../icons/klip-48.png", dest = "/usr/share/icons/hicolor/48x48/apps/klip.png" },
     { source = "../icons/klip-128.png", dest = "/usr/share/icons/hicolor/128x128/apps/klip.png" },
     { source = "../icons/klip.png", dest = "/usr/share/icons/hicolor/256x256/apps/klip.png" },
+    { source = "../icons/klip.svg", dest = "/usr/share/icons/hicolor/scalable/apps/klip.svg" },
     { source = "../klip.desktop", dest = "/usr/share/applications/klip.desktop" },
 ]
 
