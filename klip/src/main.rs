@@ -3,27 +3,17 @@ mod storage;
 mod watcher;
 
 use anyhow::Result;
-use klip_common::{ClipEntry, DaemonEvent};
-use std::path::PathBuf;
+use klip_common::{Config, DaemonEvent};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
-
-/// Default data directory: ~/.local/share/klip
-fn default_data_dir() -> PathBuf {
-    let base = std::env::var("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-            PathBuf::from(home).join(".local").join("share")
-        });
-    base.join("klip")
-}
+use watcher::Clip;
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .init();
 
-    let data_dir = default_data_dir();
+    let data_dir = klip_common::data_dir();
     std::fs::create_dir_all(&data_dir)?;
 
     // Single instance: if another daemon is already serving the socket, don't
@@ -37,33 +27,83 @@ fn main() -> Result<()> {
     log::info!("Klip daemon starting...");
     log::info!("Data directory: {:?}", data_dir);
 
-    // Initialize storage
-    let storage = Arc::new(storage::Storage::new(data_dir.clone())?);
-    let storage_clone = storage.clone();
+    if let Err(e) = Config::write_default_if_missing() {
+        log::warn!("Could not write default config: {e}");
+    }
+    let (config, warning) = Config::load();
+    if let Some(w) = warning {
+        log::warn!("{w} — using defaults");
+    }
+    log::info!("Config: {:?}", config);
 
-    // Channel: watcher -> daemon (ClipEntry)
-    let (clip_tx, clip_rx) = mpsc::channel::<ClipEntry>();
-    // Channel: daemon -> IPC clients (DaemonEvent)
-    let (event_tx, event_rx) = mpsc::channel::<DaemonEvent>();
+    // Initialize storage
+    let storage = Arc::new(storage::Storage::new(data_dir.clone(), klip_common::images_dir())?);
+    match storage.prune(config.max_history) {
+        Ok(removed) if !removed.is_empty() => {
+            log::info!("Pruned {} entries beyond max_history={}", removed.len(), config.max_history)
+        }
+        Ok(_) => {}
+        Err(e) => log::error!("Failed to prune history: {e}"),
+    }
+    let events = Arc::new(ipc::Events::default());
+    let paused = Arc::new(AtomicBool::new(false));
+
+    // Channel: watcher -> storage processor
+    let (clip_tx, clip_rx) = mpsc::channel::<Clip>();
 
     // Spawn clipboard watcher in a background thread
+    let watcher_config = config.clone();
     std::thread::spawn(move || {
-        if let Err(e) = watcher::start_watcher(clip_tx) {
+        if let Err(e) = watcher::start_watcher(clip_tx, &watcher_config) {
             log::error!("Clipboard watcher failed: {}", e);
         }
     });
 
-    // Spawn storage processor: reads from clip_rx, persists, and forwards events
-    let storage_for_processor = storage_clone.clone();
-    let event_tx_for_processor = event_tx.clone();
+    // Spawn storage processor: persists clips, enforces max_history, and
+    // pushes events to subscribed clients
+    let storage_for_processor = storage.clone();
+    let events_for_processor = events.clone();
+    let paused_for_processor = paused.clone();
     std::thread::spawn(move || {
-        while let Ok(entry) = clip_rx.recv() {
-            match storage_for_processor.insert(&entry.content, &entry.mime_type) {
-                Ok(saved) => {
-                    log::info!("New clip saved: id={}, len={}", saved.id, saved.content.len());
-                    let _ = event_tx_for_processor.send(DaemonEvent::EntryAdded(saved));
+        while let Ok(clip) = clip_rx.recv() {
+            if paused_for_processor.load(Ordering::Relaxed) {
+                log::debug!("Capture paused, dropping clip");
+                continue;
+            }
+            let result = match clip {
+                Clip::Text(content) => {
+                    let mime = watcher::detect_content_type(&content);
+                    storage_for_processor.insert(&content, &mime)
                 }
-                Err(e) => log::error!("Failed to save clip: {}", e),
+                Clip::Image { .. } if !config.capture_images => continue,
+                Clip::Image { data, .. } if data.len() > config.max_image_bytes() => {
+                    log::info!("Skipping {} byte image (max_image_mb={})", data.len(), config.max_image_mb);
+                    continue;
+                }
+                Clip::Image { mime, data } => storage_for_processor.insert_image(&mime, &data),
+            };
+            let inserted = match result {
+                Ok(inserted) => inserted,
+                Err(e) => {
+                    log::error!("Failed to save clip: {}", e);
+                    continue;
+                }
+            };
+            let saved = inserted.entry;
+            log::info!("Clip saved: id={}, type={}, new={}", saved.id, saved.mime_type, inserted.is_new);
+            events_for_processor.emit(&if inserted.is_new {
+                DaemonEvent::EntryAdded(saved)
+            } else {
+                DaemonEvent::EntryUpdated(saved)
+            });
+
+            match storage_for_processor.prune(config.max_history) {
+                Ok(removed) => {
+                    for id in removed {
+                        events_for_processor.emit(&DaemonEvent::EntryRemoved(id));
+                    }
+                }
+                Err(e) => log::error!("Failed to prune history: {e}"),
             }
         }
     });
@@ -74,8 +114,7 @@ fn main() -> Result<()> {
     let listener = std::os::unix::net::UnixListener::bind(&socket_path)?;
     log::info!("IPC socket at {:?}", socket_path);
 
-    let event_rx = Arc::new(std::sync::Mutex::new(event_rx));
-    ipc::run_ipc(listener, storage, event_rx)?;
+    ipc::run_ipc(listener, storage, events, paused)?;
 
     Ok(())
 }

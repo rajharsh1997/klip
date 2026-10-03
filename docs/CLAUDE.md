@@ -227,10 +227,56 @@ It should say "Using XWayland clipboard monitoring", not "polling".
 
 ### Feature gaps
 
-- No pin/delete UI (backend exists).
-- No history size limit.
-- No image support.
 - No paste-into-app (copy only).
-- No settings or config file.
-- `DaemonEvent` push is unused.
-- No `ext_data_control_v1` backend for modern KDE and wlroots.
+- Image capture works on every watcher, with one exception: the Klipper D-Bus watcher only sees images if Klipper's "ignore images" option (on by default) is off, because Klipper sends no `clipboardHistoryUpdated` signal for images. That path only runs on old Plasma without data-control.
+- No settings UI (config file only, read at daemon start).
+
+## Features added (2026-10-02, uncommitted)
+
+- **Config**: `klip_common::Config` lives at `~/.config/klip/config.toml`, and klipd writes a documented default on first start. Keys: `max_history` (1000, 0 = unlimited), `capture_images`, `max_image_mb`. `klip-common` also owns `data_dir()`, `images_dir()` and `socket_path()`.
+- **History limit**: `Storage::prune` runs at startup and after every insert. It deletes the oldest unpinned rows beyond `max_history` and emits `EntryRemoved`.
+- **Event push**: send `"Subscribe"` and the daemon answers `"Ok"`. After that the connection only receives `DaemonEvent` JSON lines: `EntryAdded`, `EntryUpdated` (dedup bump or pin), `EntryRemoved`, `HistoryCleared`. `ipc::Events` fans out with a 500 ms write timeout and drops dead subscribers. The GUI subscribes while the palette is open and refetches on each event. When subscribed, it does *not* reload after its own actions; the event does that.
+- **Images**:
+  - The watcher channel carries `watcher::Clip::{Text, Image}`. `detect_content_type` now runs in the storage processor.
+  - `wayland_dc` takes text if any text MIME is offered, otherwise `image/png|jpeg|webp|gif|bmp`.
+  - Images are stored as files in `~/.local/share/klip/images/<fnv64>-<len>.<ext>`. The row's `content` is that file name, so dedup works unchanged.
+  - Files are deleted when no row references them.
+  - `Copy` sends the image back with its MIME type (`wl-clipboard-rs` → `wl-copy --type` → `xclip -t`).
+- **wl-paste images** (Klipper D-Bus watcher and polling fallback): `read_clipboard_wl_paste(max_image_bytes)` returns a `Clip`, text first, else `wl-paste --type image/*`. The polling path was verified byte-identical on KDE.
+- **X11/XWayland images** (`x11.rs`, the GNOME path): owner change → `TARGETS` → text if offered, else `image/*` → read the property, with INCR (chunked) transfers via `PropertyNotify`.
+  - Verified with a test X11 owner: direct, 3 MB INCR and JPEG transfers.
+  - Verified on headless mutter 46: `wl-copy --type image/png` from a Wayland client gets mirrored to X11 and captured byte-identical (3 MB too). Copy-back via `wl-copy --type` also round-trips.
+- **GUI** (`Palette` struct in `klip-gui/src/main.rs`):
+  - Pin and delete hover buttons. They're unfocusable, so typing stays in search.
+  - Keys: ↑/↓ selection, Enter copies, Alt+P pin, Alt+Delete / Alt+Backspace delete.
+  - Image rows show a gdk-pixbuf thumbnail (cached per window) and the dimensions.
+  - CSS loads once at startup.
+  - Fixed the URL icon and colour, which never showed: the check was for `"url"` but the MIME type is `text/uri-list`.
+- **Tray** (`klip-gui/src/tray.rs`):
+  - Menu: the 5 most recent clips (≤3 pinned first; click copies), Open Klip, Pause Capture, Clear History (confirm submenu), Start at Login, Quit. Every item has an icon and none is a checkmark item: KDE reserves an icon/checkbox column for all rows once any row uses one, and a mix left wide gaps. So the toggles are labels instead ("Pause/Resume Capture", "Start at Login: On/Off"). Clip icons: `pin`, `text-plain`, `image-x-generic`. Upgrades restart running `klipd` user services (RPM `post_install_script` and deb `postinst` use `systemctl --user -M user@ try-restart`).
+  - A background thread subscribes to daemon events and calls `Handle::update`, reconnecting every 3 s while the daemon is down.
+  - Tooltip shows the clip count or "paused"; the overlay icon is `media-playback-pause` while paused.
+  - Labels escape `_` as `__` (DBusMenu mnemonics).
+- **Tray icons are resolved per theme** (`tray::Icons::resolve`, GTK main thread): the first name the current `IconTheme` has wins. Breeze has `pin`, `text-plain`, `edit-clear-history`, …; Adwaita (GNOME/Ubuntu) mostly only has `-symbolic` action icons, so fixed Breeze names showed as blank rows there. Checked under both themes.
+- **Right-click menu** (`klip-gui/src/row_menu.rs`): right-click a row, or press Menu / Shift+F10 on the selection.
+  - Items: Copy (Enter), Quick Copy (Alt+N, top 9 only), Open Link (URLs), Pin/Unpin (Alt+P), Delete (Alt+Delete), Clear Unpinned History (Ctrl+Backspace). Shortcut hints are just labels; the palette's key handler does the work.
+  - It's a plain `Popover` of buttons, **not** a `PopoverMenu`: the latter was allocated ~18px less than its natural height on KDE, cutting off the last item.
+  - The popover is parented to the list box (unparented on its destroy). So `render()` must clear rows via `row_at_index(0)`: a `first_child()` loop spins forever on the popover ("Tried to remove non-child").
+  - `menu_open` suppresses the focus-loss auto-close while the menu is up.
+  - The footer hint "Right-click a clip for more options" sits under the list.
+- **Testing GUI states without input**: temporarily add a hook in `build_ui` (e.g. call `show_row_menu` on a timer), build, copy the binary to scratch, restore the source, run it under `dbus-run-session` against a test daemon, then screenshot with `spectacle -f` and crop. Kill the previous debug instance first (app `hold()` keeps it alive, so `cp` fails with "Text file busy").
+- **Tray clip rows**:
+  - Monochrome per-type icons: text `edit-paste`, URL `insert-link`, code `code-context`, email `mail-message`, path `document-open`; pinned clips use `pin`. Each has an Adwaita `-symbolic` fallback.
+  - Images get a real 32 px thumbnail and colours a swatch, sent as PNG `icon_data` (DBusMenu `icon-data`). Images are labelled "Image · W×H".
+  - Thumbnails are crop-to-fill squares (`thumbnail_png`); squeezing whole screenshots in left unreadable strips.
+  - Pictures are rendered in the tray's sync thread and cached per content.
+  - To inspect what the panel receives, read `icon-data` from `GetLayout` and save the bytes as PNG.
+- **Pause**: `SetPaused{paused}` / `Status` requests (response `Status{count, paused}`) and a `PausedChanged` event. The flag lives in the daemon (an `AtomicBool`, not persisted) and the storage processor drops clips while it's set.
+- **`klip --hidden`**: starts only the tray, skipping the first activate's window. The autostart entry `~/.config/autostart/klip.desktop` uses it.
+- **Testing the tray without input injection**: run `klip --hidden` under `dbus-run-session` with a fake `org.kde.StatusNotifierWatcher` in Python, then drive `com.canonical.dbusmenu` `GetLayout`/`Event("clicked")` on `/MenuBar`.
+- **Verified**: storage unit tests (`cargo test`), plus an isolated daemon on KDE: pruning, the event stream, PNG capture, byte-identical image copy-back, and image-file cleanup. Palette rendering and live refresh were checked by screenshot. **Keyboard and mouse actions in the GUI are not yet verified by hand.**
+- **Testing tip**: run a second GUI without killing the user's instance:
+  ```bash
+  XDG_DATA_HOME=<dir> dbus-run-session -- target/release/klip
+  ```
+  This uses a private bus, so there's no single-instance clash (and no tray). The socket path must stay under 108 chars, so symlink a short dir in `$XDG_RUNTIME_DIR`. **The palette steals focus**, so keystrokes the user is typing land in it.

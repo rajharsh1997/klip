@@ -9,6 +9,9 @@ A keyboard-driven clipboard manager for Linux, inspired by Maccy but built nativ
 - **Instant search** — fuzzy search through clipboard history
 - **Quick-copy badges** — press `1`–`9` to instantly paste any of the top 9 entries
 - **Pin important clips** — keep frequently used snippets pinned
+- **Images** — screenshots and copied images are kept too, with thumbnails
+- **Live updates** — the open palette refreshes as you copy
+- **History limit** — old unpinned clips are pruned automatically (configurable)
 - **Wayland & X11 support** — works on both display servers
 - **SQLite-backed** — persistent history with WAL mode for performance
 
@@ -162,10 +165,38 @@ Bind a global shortcut (e.g., `Ctrl+Alt+V`) to `klip` in your desktop environmen
 
 | Key | Action |
 |-----|--------|
-| `1`–`9` | Copy entry at that position |
+| `1`–`9` | Copy entry at that position (while the search box is empty) |
+| `Alt+1`–`9` | Copy entry at that position (any time) |
+| `↑` / `↓` | Move selection |
+| `Enter` | Copy selected entry |
+| `Alt+P` | Pin / unpin selected entry |
+| `Alt+Delete` | Delete selected entry |
 | `Escape` | Close palette |
 | `Ctrl+Backspace` | Clear unpinned history |
-| Type to search | Fuzzy filter entries |
+| Type to search | Fuzzy filter entries (`image` finds images) |
+| `Menu` / `Shift+F10` | Open the options menu for the selected entry |
+
+Hovering a row also shows pin and delete buttons. **Right-click** a clip for its options menu (Copy, Quick Copy, Open Link for URLs, Pin/Unpin, Delete, Clear Unpinned History). Each item shows its keyboard shortcut.
+
+## Tray Menu
+
+The tray icon's menu lists your 5 most recent clips (up to 3 pinned ones first); click one to copy it. It also has:
+
+- **Pause Capture**: stop recording while you copy passwords or other secrets. The icon shows a pause overlay.
+- **Clear History**: deletes all unpinned clips (behind a submenu, so it can't be clicked by accident).
+- **Start at Login**: start the tray when you log in (`klip --hidden` starts it without opening the palette).
+
+## Configuration
+
+`klipd` creates `~/.config/klip/config.toml` on first start:
+
+```toml
+max_history = 1000     # unpinned clips to keep (0 = unlimited)
+capture_images = true  # record copied images
+max_image_mb = 20      # ignore larger images
+```
+
+Restart the daemon after editing: `systemctl --user restart klipd`.
 
 ## Project Structure
 

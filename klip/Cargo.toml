@@ -32,6 +32,14 @@ assets = [
 maintainer-scripts = "../maintainer-scripts"
 
 [package.metadata.generate-rpm]
+post_install_script = """
+# Restart running klipd user services so they pick up the new binary (an old
+# daemon doesn't understand requests added in newer GUI versions)
+for uid in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $1}'); do
+    user=$(id -nu "$uid" 2>/dev/null) || continue
+    systemctl --user -M "$user@" try-restart klipd.service >/dev/null 2>&1 || true
+done
+"""
 assets = [
     { source = "../klipd.service", dest = "/usr/lib/systemd/user/klipd.service" },
     { source = "../target/release/klipd", dest = "/usr/bin/klipd", mode = "755" },

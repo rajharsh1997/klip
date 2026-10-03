@@ -4,7 +4,7 @@ pub mod x11;
 pub mod kde;
 
 use anyhow::Result;
-use klip_common::ClipEntry;
+use klip_common::Config;
 use std::sync::mpsc::Sender;
 
 /// Supported clipboard backend.
@@ -30,25 +30,25 @@ pub fn detect_backend() -> Backend {
 /// - X11: XFixes `SelectSelectionInput` — event-driven, zero CPU
 ///
 /// Override via `KLIP_WATCHER=wayland|kde|gnome|x11` env var for testing.
-pub fn start_watcher(tx: Sender<ClipEntry>) -> Result<()> {
+pub fn start_watcher(tx: Sender<Clip>, config: &Config) -> Result<()> {
     // Allow env override for testing
     if let Ok(override_val) = std::env::var("KLIP_WATCHER") {
         match override_val.to_lowercase().as_str() {
             "wayland" | "dc" => {
                 log::info!("KLIP_WATCHER=wayland forced — trying data-control");
-                return wayland_dc::try_watch(tx);
+                return wayland_dc::try_watch(tx, config);
             }
             "kde" => {
                 log::info!("KLIP_WATCHER=kde forced");
-                return kde::try_watch(tx);
+                return kde::try_watch(tx, config);
             }
             "gnome" | "fallback" => {
                 log::info!("KLIP_WATCHER={} forced — using polling fallback", override_val);
-                return fallback::start_watch(tx);
+                return fallback::start_watch(tx, config);
             }
             "x11" => {
                 log::info!("KLIP_WATCHER=x11 forced");
-                return x11::start_watch(tx);
+                return x11::start_watch(tx, config);
             }
             other => {
                 log::warn!("Unknown KLIP_WATCHER={}, falling back to auto-detect", other);
@@ -62,19 +62,19 @@ pub fn start_watcher(tx: Sender<ClipEntry>) -> Result<()> {
     match backend {
         Backend::Wayland => {
             // Native data-control protocol — the most reliable option where available
-            match wayland_dc::try_watch(tx.clone()) {
+            match wayland_dc::try_watch(tx.clone(), config) {
                 Ok(()) => return Ok(()),
                 Err(e) => log::info!("Wayland data-control unavailable: {e}"),
             }
             // KDE Klipper D-Bus (older Plasma without data-control)
-            if kde::try_watch(tx.clone()).is_ok() {
+            if kde::try_watch(tx.clone(), config).is_ok() {
                 return Ok(());
             }
             // XWayland XFixes — the GNOME path (Mutter has no data-control).
             // Mutter mirrors every Wayland clipboard change to X11, so this is
             // reliable there; KWin only mirrors while an X11 window is focused.
             ensure_xwayland_auth();
-            match x11::start_watch(tx.clone()) {
+            match x11::start_watch(tx.clone(), config) {
                 Ok(()) => {
                     log::info!("Using XWayland clipboard monitoring");
                     return Ok(());
@@ -84,9 +84,9 @@ pub fn start_watcher(tx: Sender<ClipEntry>) -> Result<()> {
 
             // Last resort: polling — misses copies made less than 5s apart
             log::warn!("No event-driven clipboard backend available, using polling fallback");
-            fallback::start_watch(tx)
+            fallback::start_watch(tx, config)
         }
-        Backend::X11 => x11::start_watch(tx),
+        Backend::X11 => x11::start_watch(tx, config),
     }
 }
 
@@ -141,28 +141,33 @@ pub fn get_clipboard_types() -> Option<String> {
     }
 }
 
-/// Check if the clipboard currently contains text/plain content.
-pub fn clipboard_has_text() -> bool {
-    get_clipboard_types().map_or(false, |t| {
-        t.lines().any(|l| {
-            l.starts_with("text/") || l == "UTF8_STRING" || l == "STRING" || l == "TEXT"
-        })
-    })
-}
+/// Image types read via `wl-paste`, in priority order.
+const WL_PASTE_IMAGE_MIMES: &[&str] = &["image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp"];
 
-/// Try to read clipboard text via the `wl-paste` command.
-/// Uses a timeout to avoid hanging on image/non-text clipboard data.
-pub fn read_clipboard_wl_paste() -> Option<String> {
-    if !clipboard_has_text() {
-        return None;
+/// Read the clipboard via `wl-paste`: text if any text type is offered,
+/// otherwise an image when `max_image_bytes` is `Some` (capture enabled).
+/// Uses a timeout so a stuck source client can't hang the watcher.
+pub fn read_clipboard_wl_paste(max_image_bytes: Option<usize>) -> Option<Clip> {
+    let types = get_clipboard_types()?;
+    let has_text = types.lines().any(|l| {
+        l.starts_with("text/") || l == "UTF8_STRING" || l == "STRING" || l == "TEXT"
+    });
+    if has_text {
+        let bytes = read_wl_paste_timeout(&["--no-newline"])
+            .or_else(|| read_wl_paste_timeout(&[]))?;
+        let content = String::from_utf8_lossy(&bytes).into_owned();
+        return (!content.trim().is_empty()).then_some(Clip::Text(content));
     }
-    read_wl_paste_timeout(&["--no-newline"]).or_else(|| read_wl_paste_timeout(&[]))
+    let max = max_image_bytes?;
+    let mime = WL_PASTE_IMAGE_MIMES.iter().find(|m| types.lines().any(|l| l == **m))?;
+    let data = read_wl_paste_timeout(&["--type", mime])?;
+    (!data.is_empty() && data.len() <= max)
+        .then(|| Clip::Image { mime: mime.to_string(), data })
 }
 
-/// Run wl-paste with a 2-second timeout. Returns None if it times out
-/// (e.g. clipboard contains an image), fails, or yields only whitespace.
-/// Content is returned exactly as copied (no trimming).
-fn read_wl_paste_timeout(args: &[&str]) -> Option<String> {
+/// Run wl-paste with a 2-second timeout. Returns None if it times out or
+/// fails. Content is returned exactly as copied (no trimming).
+fn read_wl_paste_timeout(args: &[&str]) -> Option<Vec<u8>> {
     use std::io::Read;
 
     let mut child = std::process::Command::new("wl-paste")
@@ -193,21 +198,14 @@ fn read_wl_paste_timeout(args: &[&str]) -> Option<String> {
     if !child.wait().ok()?.success() {
         return None;
     }
-    let content = String::from_utf8_lossy(&bytes).into_owned();
-    if content.trim().is_empty() { None } else { Some(content) }
+    Some(bytes)
 }
 
-/// Build a ClipEntry from text content with automatic type detection.
-pub fn make_entry(content: String) -> ClipEntry {
-    let mime_type = detect_content_type(&content);
-    ClipEntry {
-        id: 0,
-        content,
-        mime_type,
-        pinned: false,
-        created_at: String::new(),
-        updated_at: String::new(),
-    }
+/// Something a watcher backend captured from the clipboard.
+#[derive(Clone, PartialEq)]
+pub enum Clip {
+    Text(String),
+    Image { mime: String, data: Vec<u8> },
 }
 
 /// Detect the semantic type of clipboard content.

@@ -19,7 +19,8 @@
 //!   4. On Selection, ask the source client to write text into a pipe, read it
 
 use anyhow::{anyhow, Result};
-use klip_common::ClipEntry;
+use super::Clip;
+use klip_common::Config;
 use std::collections::HashMap;
 use std::io::Read;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
@@ -40,7 +41,7 @@ use wayland_protocols_wlr::data_control::v1::client::{
 /// Give up on a source client that doesn't finish writing within this time.
 const READ_TIMEOUT: Duration = Duration::from_secs(2);
 /// Ignore text clips larger than this.
-const MAX_CLIP_BYTES: usize = 16 * 1024 * 1024;
+const MAX_TEXT_BYTES: usize = 16 * 1024 * 1024;
 
 /// Text MIME types in priority order — most specific first.
 const TEXT_MIMES: &[&str] = &[
@@ -51,22 +52,36 @@ const TEXT_MIMES: &[&str] = &[
     "TEXT",
 ];
 
+/// Image MIME types in priority order. Used only when no text type is offered,
+/// so e.g. a file copied in a file manager is still recorded as its path.
+const IMAGE_MIMES: &[&str] = &[
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+    "image/bmp",
+];
+
 // ── State ─────────────────────────────────────────────────────────────────────
 
 struct AppState {
-    tx: Sender<ClipEntry>,
+    tx: Sender<Clip>,
+    /// Image size limit in bytes; `None` when image capture is disabled.
+    max_image_bytes: Option<usize>,
     ext_manager: Option<ext_data_control_manager_v1::ExtDataControlManagerV1>,
     wlr_manager: Option<zwlr_data_control_manager_v1::ZwlrDataControlManagerV1>,
     seat: Option<wl_seat::WlSeat>,
     /// MIME types advertised per offer, keyed by the offer's protocol id.
     pending_mimes: HashMap<u32, Vec<String>>,
-    last_content: Option<String>,
+    /// Raw bytes of the last recorded clip, to skip re-announced selections.
+    last_content: Option<Vec<u8>>,
 }
 
 impl AppState {
-    fn new(tx: Sender<ClipEntry>) -> Self {
+    fn new(tx: Sender<Clip>, config: &Config) -> Self {
         Self {
             tx,
+            max_image_bytes: config.capture_images.then(|| config.max_image_bytes()),
             ext_manager: None,
             wlr_manager: None,
             seat: None,
@@ -86,11 +101,15 @@ impl AppState {
         let Some(mimes) = self.pending_mimes.remove(&key) else {
             return;
         };
-        let Some(mime) = TEXT_MIMES
-            .iter()
-            .find(|&&want| mimes.iter().any(|m| m.eq_ignore_ascii_case(want)))
-        else {
-            log::debug!("[wayland_dc] selection has no text type ({mimes:?})");
+        let offered = |want: &&&str| mimes.iter().any(|m| m.eq_ignore_ascii_case(want));
+        let (mime, max_bytes, is_image) = if let Some(mime) = TEXT_MIMES.iter().find(offered) {
+            (*mime, MAX_TEXT_BYTES, false)
+        } else if let (Some(mime), Some(max)) =
+            (IMAGE_MIMES.iter().find(offered), self.max_image_bytes)
+        {
+            (*mime, max, true)
+        } else {
+            log::debug!("[wayland_dc] selection has no supported type ({mimes:?})");
             return;
         };
 
@@ -106,17 +125,28 @@ impl AppState {
         }
         drop(write_fd);
 
-        let Some(bytes) = read_with_timeout(read_fd) else {
-            log::debug!("[wayland_dc] reading selection failed or timed out");
+        let Some(bytes) = read_with_timeout(read_fd, max_bytes) else {
+            log::debug!("[wayland_dc] reading {mime} selection failed, timed out or too large");
             return;
         };
-        let content = String::from_utf8_lossy(&bytes).into_owned();
-        if content.trim().is_empty() || Some(&content) == self.last_content.as_ref() {
+        if Some(&bytes) == self.last_content.as_ref() {
             return;
         }
-        log::debug!("[wayland_dc] new clip ({} bytes)", content.len());
-        self.last_content = Some(content.clone());
-        let _ = self.tx.send(super::make_entry(content));
+        let clip = if is_image {
+            if bytes.is_empty() {
+                return;
+            }
+            Clip::Image { mime: mime.to_string(), data: bytes.clone() }
+        } else {
+            let content = String::from_utf8_lossy(&bytes).into_owned();
+            if content.trim().is_empty() {
+                return;
+            }
+            Clip::Text(content)
+        };
+        log::debug!("[wayland_dc] new {mime} clip ({} bytes)", bytes.len());
+        self.last_content = Some(bytes);
+        let _ = self.tx.send(clip);
     }
 }
 
@@ -262,9 +292,9 @@ fn make_pipe() -> Result<(OwnedFd, OwnedFd)> {
     Ok((read_fd, write_fd))
 }
 
-/// Read a pipe to EOF, giving up after `READ_TIMEOUT` or `MAX_CLIP_BYTES` so a
+/// Read a pipe to EOF, giving up after `READ_TIMEOUT` or `max_bytes` so a
 /// misbehaving source client can't stall the watcher.
-fn read_with_timeout(fd: OwnedFd) -> Option<Vec<u8>> {
+fn read_with_timeout(fd: OwnedFd, max_bytes: usize) -> Option<Vec<u8>> {
     let deadline = Instant::now() + READ_TIMEOUT;
     let mut file = std::fs::File::from(fd);
     let mut buf = Vec::new();
@@ -289,7 +319,7 @@ fn read_with_timeout(fd: OwnedFd) -> Option<Vec<u8>> {
             Ok(0) => return Some(buf),
             Ok(n) => {
                 buf.extend_from_slice(&chunk[..n]);
-                if buf.len() > MAX_CLIP_BYTES {
+                if buf.len() > max_bytes {
                     return None;
                 }
             }
@@ -306,7 +336,7 @@ fn read_with_timeout(fd: OwnedFd) -> Option<Vec<u8>> {
 /// Returns `Err` if `$WAYLAND_DISPLAY` is unusable or the compositor supports
 /// neither data-control protocol. On success a background thread blocks on
 /// compositor events (zero CPU when idle).
-pub fn try_watch(tx: Sender<ClipEntry>) -> Result<()> {
+pub fn try_watch(tx: Sender<Clip>, config: &Config) -> Result<()> {
     let conn = Connection::connect_to_env()
         .map_err(|e| anyhow!("Cannot connect to Wayland display: {e}"))?;
 
@@ -314,7 +344,7 @@ pub fn try_watch(tx: Sender<ClipEntry>) -> Result<()> {
     let qh = event_queue.handle();
     conn.display().get_registry(&qh, ());
 
-    let mut state = AppState::new(tx);
+    let mut state = AppState::new(tx, config);
 
     // Round-trip 1: receive all Global events → bind managers + seat
     event_queue

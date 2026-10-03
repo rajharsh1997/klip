@@ -1,5 +1,5 @@
 use anyhow::Result;
-use klip_common::ClipEntry;
+use klip_common::Config;
 use std::io::BufRead;
 use std::sync::mpsc::Sender;
 use std::thread;
@@ -7,7 +7,8 @@ use std::thread;
 /// Try to start KDE D-Bus clipboard monitoring.
 /// Returns Ok(()) if Klipper is running and dbus-monitor was spawned.
 /// This is event-driven — zero CPU, instant notification.
-pub fn try_watch(tx: Sender<ClipEntry>) -> Result<()> {
+pub fn try_watch(tx: Sender<super::Clip>, config: &Config) -> Result<()> {
+    let max_image_bytes = config.capture_images.then(|| config.max_image_bytes());
     log::info!("Trying KDE Klipper D-Bus clipboard monitoring...");
 
     // Check if Klipper is running
@@ -60,7 +61,7 @@ pub fn try_watch(tx: Sender<ClipEntry>) -> Result<()> {
 
     thread::spawn(move || {
         log::info!("KDE D-Bus clipboard monitoring active");
-        let mut last_content: Option<String> = None;
+        let mut last_content: Option<super::Clip> = None;
         let stdout = match child.stdout.take() {
             Some(s) => s,
             None => return,
@@ -75,10 +76,10 @@ pub fn try_watch(tx: Sender<ClipEntry>) -> Result<()> {
             };
             // clipboardHistoryUpdated signal received — clipboard changed
             if line.contains("member=clipboardHistoryUpdated") {
-                if let Some(content) = super::read_clipboard_wl_paste() {
-                    if Some(&content) != last_content.as_ref() {
-                        last_content = Some(content.clone());
-                        let _ = tx.send(super::make_entry(content));
+                if let Some(clip) = super::read_clipboard_wl_paste(max_image_bytes) {
+                    if Some(&clip) != last_content.as_ref() {
+                        last_content = Some(clip.clone());
+                        let _ = tx.send(clip);
                     }
                 }
             }

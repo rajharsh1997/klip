@@ -1,74 +1,16 @@
 mod client;
+mod row_menu;
+mod tray;
 
 use gtk4::prelude::*;
 use gtk4::{gdk, gio, glib};
 use glib::translate::IntoGlib;
 use klip_common::ClipEntry;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::io::BufRead;
 use std::path::PathBuf;
 use std::rc::Rc;
-use ksni::{Tray, MenuItem, menu::StandardItem, blocking::TrayMethods};
-
-enum TrayMsg {
-    Toggle,
-    Quit,
-}
-
-struct KlipTray {
-    tx: async_channel::Sender<TrayMsg>,
-}
-
-impl Tray for KlipTray {
-    fn id(&self) -> String {
-        "klip".into()
-    }
-    fn icon_name(&self) -> String {
-        "klip".into()
-    }
-    fn tool_tip(&self) -> ksni::ToolTip {
-        ksni::ToolTip {
-            title: "Klip".into(),
-            description: "Clipboard Manager".into(),
-            icon_name: "klip".into(),
-            icon_pixmap: vec![],
-        }
-    }
-    fn title(&self) -> String {
-        "Klip".into()
-    }
-    fn activate(&mut self, _x: i32, _y: i32) {
-        let _ = self.tx.try_send(TrayMsg::Toggle);
-    }
-    fn menu(&self) -> Vec<MenuItem<Self>> {
-        vec![
-            StandardItem {
-                label: "Toggle Window".into(),
-                activate: Box::new(|this: &mut Self| {
-                    let _ = this.tx.try_send(TrayMsg::Toggle);
-                }),
-                ..Default::default()
-            }.into(),
-            StandardItem {
-                label: "Quit".into(),
-                icon_name: "application-exit".into(),
-                activate: Box::new(|this: &mut Self| {
-                    let _ = this.tx.try_send(TrayMsg::Quit);
-                }),
-                ..Default::default()
-            }.into(),
-        ]
-    }
-}
-
-fn default_socket_path() -> PathBuf {
-    let base = std::env::var("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-            PathBuf::from(home).join(".local").join("share")
-        });
-    base.join("klip").join("klip.sock")
-}
-
 fn daemon_alive(socket_path: &PathBuf) -> bool {
     std::os::unix::net::UnixStream::connect(socket_path).is_ok()
 }
@@ -125,6 +67,12 @@ fn ensure_daemon_running(socket_path: &PathBuf) {
 }
 
 fn main() -> glib::ExitCode {
+    // `--hidden` (used by the autostart entry) starts just the tray, without
+    // opening the palette. Strip it so GTK doesn't reject the unknown option.
+    let (hidden, args): (Vec<String>, Vec<String>) =
+        std::env::args().partition(|a| a == "--hidden");
+    let start_hidden = Cell::new(!hidden.is_empty());
+
     let app = gtk4::Application::new(
         Some("com.klip.clipboard-manager"),
         gio::ApplicationFlags::empty(),
@@ -135,12 +83,16 @@ fn main() -> glib::ExitCode {
     // so creating the tray here avoids a temporary duplicate tray icon.
     app.connect_startup(|app| {
         std::mem::forget(app.hold()); // Keeps the GTK application alive in the background even when 0 windows exist
-        spawn_tray(app);
+        load_css();
+        tray::spawn_tray(app);
     });
 
-    app.connect_activate(|app| {
-        let socket_path = default_socket_path();
+    app.connect_activate(move |app| {
+        let socket_path = klip_common::socket_path();
         ensure_daemon_running(&socket_path);
+        if start_hidden.replace(false) {
+            return;
+        }
         if let Some(win) = app.active_window() {
             let ts = (glib::monotonic_time() / 1000) as u32;
             win.present_with_time(ts);
@@ -149,40 +101,53 @@ fn main() -> glib::ExitCode {
         }
     });
 
-    app.run()
+    app.run_with_args(&args)
 }
 
-fn spawn_tray(app: &gtk4::Application) {
-    let (tx, rx) = async_channel::unbounded();
-    let tray = KlipTray { tx };
-    match tray.spawn() {
-        Ok(handle) => std::mem::forget(handle),
-        Err(e) => {
-            // No StatusNotifier host (e.g. stock GNOME without the AppIndicator
-            // extension) — the palette still works via the hotkey.
-            eprintln!("[klip-gui] Tray icon unavailable: {e}");
-            return;
-        }
+fn load_css() {
+    let css = gtk4::CssProvider::new();
+    css.load_from_data(include_str!("style.css"));
+    if let Some(display) = gdk::Display::default() {
+        gtk4::style_context_add_provider_for_display(
+            &display,
+            &css,
+            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
     }
+}
 
-    let app_clone = app.clone();
-    glib::MainContext::default().spawn_local(async move {
-        while let Ok(msg) = rx.recv().await {
-            match msg {
-                TrayMsg::Toggle => {
-                    if let Some(win) = app_clone.active_window() {
-                        win.close();
-                    } else {
-                        app_clone.activate();
-                    }
-                }
-                TrayMsg::Quit => {
-                    app_clone.quit();
-                    std::process::exit(0);
-                }
-            }
-        }
-    });
+/// Maximum rows shown at once, to keep layout fast.
+const MAX_RESULTS: usize = 50;
+/// Bounding box for image thumbnails in the list.
+const THUMB_W: i32 = 200;
+const THUMB_H: i32 = 56;
+/// Icon theme names tried in order (Adwaita, Breeze, generic).
+const PIN_ICONS: &[&str] = &["view-pin-symbolic", "pin-symbolic", "starred-symbolic"];
+const DELETE_ICONS: &[&str] = &["user-trash-symbolic", "edit-delete-symbolic"];
+
+/// A thumbnail and the image's original width and height (`None` if unreadable).
+type Thumb = Option<(gdk::Texture, i32, i32)>;
+
+/// The open palette window and its state. Lives until the window is destroyed.
+struct Palette {
+    socket_path: PathBuf,
+    window: gtk4::ApplicationWindow,
+    search: gtk4::SearchEntry,
+    scrolled: gtk4::ScrolledWindow,
+    list_box: gtk4::ListBox,
+    /// Everything fetched from the daemon (its 500 most recent entries).
+    all_entries: RefCell<Vec<ClipEntry>>,
+    /// The entries currently displayed, in order, with their rows.
+    shown: RefCell<Vec<(ClipEntry, gtk4::ListBoxRow)>>,
+    /// Decoded thumbnails, keyed by image file name.
+    thumbs: RefCell<HashMap<String, Thumb>>,
+    /// Whether the daemon pushes change events to us. If so, the list refreshes
+    /// from those events rather than after each of our own actions.
+    subscribed: Cell<bool>,
+    /// Right-click menu (see `row_menu.rs`).
+    row_menu: gtk4::Popover,
+    /// While the menu is open the palette may look unfocused; don't dismiss it.
+    menu_open: Rc<Cell<bool>>,
 }
 
 fn build_ui(app: &gtk4::Application, socket_path: PathBuf) {
@@ -195,37 +160,32 @@ fn build_ui(app: &gtk4::Application, socket_path: PathBuf) {
     window.add_css_class("klip-popup");
     window.set_icon_name(Some("klip"));
 
-    // Auto-dismiss on focus loss with a small debounce to ignore compositor mapping glitches
-    window.connect_is_active_notify(move |w| {
-        if !w.is_active() && w.is_visible() {
-            let win = w.clone();
-            glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
-                if !win.is_active() && win.is_visible() {
-                    win.close();
-                }
-            });
-        }
-    });
-
-    // Removed Wayland layer-shell initialization because it causes focus-stealing bugs
-    // The window will now behave as a standard GTK floating window centered on the screen.
-
-    // ── CSS ───────────────────────────────────────────────────────────────────
-    let css = gtk4::CssProvider::new();
-    css.load_from_data(include_str!("style.css"));
-    gtk4::style_context_add_provider_for_display(
-        &gdk::Display::default().expect("No display"),
-        &css,
-        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
-    );
+    // Auto-dismiss on focus loss with a small debounce to ignore compositor
+    // mapping glitches. Opening the right-click menu can make the window look
+    // inactive (the popup takes keyboard focus), so never dismiss while it's open.
+    let menu_open = Rc::new(Cell::new(false));
+    {
+        let menu_open = menu_open.clone();
+        window.connect_is_active_notify(move |w| {
+            if !w.is_active() && w.is_visible() {
+                let win = w.clone();
+                let menu_open = menu_open.clone();
+                glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
+                    if !win.is_active() && win.is_visible() && !menu_open.get() {
+                        win.close();
+                    }
+                });
+            }
+        });
+    }
 
     // ── Layout ────────────────────────────────────────────────────────────────
     let main_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     main_box.add_css_class("main-box");
 
-    let search_entry = gtk4::SearchEntry::new();
-    search_entry.set_placeholder_text(Some("Search clipboard history…"));
-    search_entry.add_css_class("search-entry");
+    let search = gtk4::SearchEntry::new();
+    search.set_placeholder_text(Some("Search clipboard history…"));
+    search.add_css_class("search-entry");
 
     let scrolled = gtk4::ScrolledWindow::new();
     scrolled.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
@@ -235,209 +195,443 @@ fn build_ui(app: &gtk4::Application, socket_path: PathBuf) {
     list_box.add_css_class("clip-list");
     scrolled.set_child(Some(&list_box));
 
-    main_box.append(&search_entry);
+    let hint = gtk4::Label::new(Some("Right-click a clip for more options"));
+    hint.add_css_class("footer-hint");
+
+    main_box.append(&search);
     main_box.append(&scrolled);
+    main_box.append(&hint);
     window.set_child(Some(&main_box));
 
-    // ── State ─────────────────────────────────────────────────────────────────
-    let initial_entries = client::list_entries(None, &socket_path).unwrap_or_default();
-    let all_entries: Rc<std::cell::RefCell<Vec<ClipEntry>>> =
-        Rc::new(std::cell::RefCell::new(initial_entries.clone()));
-    let entries: Rc<std::cell::RefCell<Vec<ClipEntry>>> =
-        Rc::new(std::cell::RefCell::new(initial_entries));
+    let palette = Rc::new(Palette {
+        socket_path,
+        window: window.clone(),
+        search: search.clone(),
+        scrolled,
+        list_box: list_box.clone(),
+        all_entries: RefCell::new(Vec::new()),
+        shown: RefCell::new(Vec::new()),
+        thumbs: RefCell::new(HashMap::new()),
+        subscribed: Cell::new(false),
+        row_menu: gtk4::Popover::new(),
+        menu_open,
+    });
+    palette.install_row_menu();
 
-    // ── Refresh helper ────────────────────────────────────────────────────────
-    fn refresh_list(
-        query: Option<&str>,
-        all_entries: &Rc<std::cell::RefCell<Vec<ClipEntry>>>,
-        entries: &Rc<std::cell::RefCell<Vec<ClipEntry>>>,
-        list_box: &gtk4::ListBox,
-    ) {
-        while let Some(child) = list_box.first_child() {
-            list_box.remove(&child);
-        }
-        
-        let fetched = all_entries.borrow().clone();
-        if fetched.is_empty() {
-            let lbl = gtk4::Label::new(Some("No clips yet — copy something!"));
-            lbl.add_css_class("empty-label");
-            lbl.set_margin_top(24);
-            let row = gtk4::ListBoxRow::new();
-            row.set_child(Some(&lbl));
-            row.set_selectable(false);
-            row.set_activatable(false);
-            row.add_css_class("transparent-row");
-            list_box.append(&row);
-            return;
-        }
-
-        let mut scored: Vec<(u32, ClipEntry)> = if let Some(q) = query.filter(|s| !s.is_empty()) {
-            let mut matcher = nucleo::Matcher::new(nucleo::Config::DEFAULT);
-            let pattern = nucleo::pattern::Pattern::new(
-                q,
-                nucleo::pattern::CaseMatching::Smart,
-                nucleo::pattern::Normalization::Smart,
-                nucleo::pattern::AtomKind::Fuzzy,
-            );
-            fetched.into_iter()
-                .filter_map(|e| {
-                    let buf = nucleo::Utf32String::from(e.content.as_str());
-                    pattern.score(buf.slice(..), &mut matcher).map(|s| (s, e))
-                })
-                .collect()
-        } else {
-            fetched.into_iter().map(|e| (0, e)).collect()
-        };
-
-        scored.sort_by(|a, b| {
-            b.1.pinned.cmp(&a.1.pinned)
-                .then_with(|| b.0.cmp(&a.0))
-                .then_with(|| b.1.updated_at.cmp(&a.1.updated_at))
-        });
-        
-        // LIMIT TO 50 ITEMS to save memory and layout time!
-        let results: Vec<ClipEntry> = scored.into_iter().map(|(_, e)| e).take(50).collect();
-        *entries.borrow_mut() = results.clone();
-        
-        let has_pinned = results.iter().any(|e| e.pinned);
-        let has_history = results.iter().any(|e| !e.pinned);
-        
-        if has_pinned {
-            list_box.append(&section_label("Pinned"));
-        }
-        
-        for (i, entry) in results.iter().enumerate() {
-            if !entry.pinned && i > 0 && results[i - 1].pinned {
-                list_box.append(&section_label("History"));
-            }
-            list_box.append(&create_entry_row(entry, i + 1));
-        }
-        
-        if !has_pinned && !has_history && query.is_some() {
-            let lbl = gtk4::Label::new(Some("No matches found."));
-            lbl.add_css_class("empty-label");
-            lbl.set_margin_top(24);
-            let row = gtk4::ListBoxRow::new();
-            row.set_child(Some(&lbl));
-            row.set_selectable(false);
-            row.set_activatable(false);
-            row.add_css_class("transparent-row");
-            list_box.append(&row);
-        }
+    // The window owns the palette; every other closure holds a weak reference.
+    {
+        let owner = RefCell::new(Some(palette.clone()));
+        window.connect_destroy(move |_| drop(owner.take()));
     }
 
     // ── Search (debounced to prevent flicker) ────────────────────────────────
     {
-        let all_entries = all_entries.clone();
-        let entries = entries.clone();
-        let list_box = list_box.clone();
-        let debounce_id: Rc<std::cell::Cell<Option<glib::SourceId>>> = Rc::new(std::cell::Cell::new(None));
-        search_entry.connect_search_changed(move |e| {
+        let weak = Rc::downgrade(&palette);
+        let debounce_id: Rc<Cell<Option<glib::SourceId>>> = Rc::new(Cell::new(None));
+        search.connect_search_changed(move |_| {
             if let Some(id) = debounce_id.take() {
                 id.remove();
             }
-            let q = e.text();
-            let q = if q.is_empty() { None } else { Some(q.to_string()) };
-            
-            let all_entries = all_entries.clone();
-            let entries = entries.clone();
-            let list_box = list_box.clone();
+            let weak = weak.clone();
             let debounce = debounce_id.clone();
-            
             let id = glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
-                refresh_list(q.as_deref(), &all_entries, &entries, &list_box);
                 debounce.set(None);
+                if let Some(p) = weak.upgrade() {
+                    p.render(false);
+                }
             });
             debounce_id.set(Some(id));
         });
     }
 
-    // ── Keyboard: Escape / Ctrl+Backspace (bubble, after SearchEntry) ─────────
+    // ── Keyboard ──────────────────────────────────────────────────────────────
+    // Capture phase: the SearchEntry has focus and would otherwise consume
+    // digits, arrows and Enter before the window ever sees them.
     {
-        let window_esc = window.clone();
-        let socket_path = socket_path.clone();
-        let all_entries = all_entries.clone();
-        let entries = entries.clone();
-        let list_box = list_box.clone();
-        let search = search_entry.clone();
+        let weak = Rc::downgrade(&palette);
         let ctrl = gtk4::EventControllerKey::new();
         ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
         ctrl.connect_key_pressed(move |_, keyval, _, state| {
-            if keyval == gdk::Key::Escape {
-                window_esc.close();
-                return glib::Propagation::Stop;
-            }
-            if keyval == gdk::Key::BackSpace
-                && state.contains(gdk::ModifierType::CONTROL_MASK)
-            {
-                let _ = client::clear_history(&socket_path);
-                *all_entries.borrow_mut() = client::list_entries(None, &socket_path).unwrap_or_default();
-                let q = search.text();
-                refresh_list(Some(q.as_str()).filter(|s| !s.is_empty()), &all_entries, &entries, &list_box);
-                return glib::Propagation::Stop;
-            }
-            glib::Propagation::Proceed
-        });
-        window.add_controller(ctrl);
-    }
-
-    // ── Keyboard: 1-9 quick-copy ──────────────────────────────────────────────
-    // Capture phase: the SearchEntry has focus and would otherwise consume the
-    // digit as search text before the window ever sees it. Plain digits act only
-    // while the search box is empty; Alt+digit works at any time.
-    {
-        let entries = entries.clone();
-        let socket_path = socket_path.clone();
-        let window_digit = window.clone();
-        let search = search_entry.clone();
-        let ctrl = gtk4::EventControllerKey::new();
-        ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
-        ctrl.connect_key_pressed(move |_, keyval, _, state| {
-            let Some(idx) = quick_copy_index(keyval) else {
+            let Some(p) = weak.upgrade() else {
                 return glib::Propagation::Proceed;
             };
-            let alt = state.contains(gdk::ModifierType::ALT_MASK);
-            let other_mods = state.intersects(
-                gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SUPER_MASK,
-            );
-            if other_mods || (!alt && !search.text().is_empty()) {
-                return glib::Propagation::Proceed;
+            if p.handle_key(keyval, state) {
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
             }
-            let ents = entries.borrow();
-            if let Some(entry) = ents.get(idx) {
-                let _ = client::copy_entry(entry.id, &socket_path);
-                window_digit.close();
-            }
-            glib::Propagation::Stop
         });
         window.add_controller(ctrl);
     }
 
     // ── Row click ─────────────────────────────────────────────────────────────
     {
-        let entries = entries.clone();
-        let socket_path = socket_path.clone();
-        let window = window.clone();
+        let weak = Rc::downgrade(&palette);
         list_box.connect_row_activated(move |_, row| {
-            let ents = entries.borrow();
-            if let Ok(id) = row.widget_name().parse::<i64>() {
-                if let Some(entry) = ents.iter().find(|e| e.id == id) {
-                    let _ = client::copy_entry(entry.id, &socket_path);
-                    window.close();
-                }
+            let Some(p) = weak.upgrade() else { return };
+            let id = p.shown.borrow().iter().find(|(_, r)| r == row).map(|(e, _)| e.id);
+            if let Some(id) = id {
+                p.copy(id);
             }
         });
     }
 
-    // ── Show & raise ──────────────────────────────────────────────────────────
-    let all_entries_ref = all_entries.clone();
-    let entries_ref = entries.clone();
-    let list_ref = list_box.clone();
-    refresh_list(None, &all_entries_ref, &entries_ref, &list_ref);
+    palette.subscribe();
+    palette.reload();
 
     let ts = (glib::monotonic_time() / 1000) as u32;
     window.present_with_time(ts);
-    search_entry.grab_focus();
+    search.grab_focus();
+}
+
+impl Palette {
+    /// Handle a key press; returns `true` if it was consumed.
+    fn handle_key(self: &Rc<Self>, keyval: gdk::Key, state: gdk::ModifierType) -> bool {
+        let ctrl = state.contains(gdk::ModifierType::CONTROL_MASK);
+        let alt = state.contains(gdk::ModifierType::ALT_MASK);
+        let sup = state.contains(gdk::ModifierType::SUPER_MASK);
+        let selected = || self.selected_entry().map(|e| e.id);
+
+        match keyval {
+            gdk::Key::Escape => self.window.close(),
+            gdk::Key::Menu => self.open_menu_for_selection(),
+            gdk::Key::F10 if state.contains(gdk::ModifierType::SHIFT_MASK) => {
+                self.open_menu_for_selection()
+            }
+            gdk::Key::Down => self.move_selection(1),
+            gdk::Key::Up => self.move_selection(-1),
+            gdk::Key::Return | gdk::Key::KP_Enter => {
+                if let Some(id) = selected() {
+                    self.copy(id);
+                }
+            }
+            gdk::Key::BackSpace if ctrl => self.clear_history(),
+            gdk::Key::p | gdk::Key::P if alt => {
+                if let Some(id) = selected() {
+                    self.toggle_pin(id);
+                }
+            }
+            gdk::Key::Delete | gdk::Key::KP_Delete | gdk::Key::BackSpace if alt => {
+                if let Some(id) = selected() {
+                    self.delete(id);
+                }
+            }
+            _ => {
+                // 1–9 quick-copy: plain digits only while the search box is
+                // empty; Alt+digit works at any time.
+                let Some(idx) = quick_copy_index(keyval) else {
+                    return false;
+                };
+                if ctrl || sup || (!alt && !self.search.text().is_empty()) {
+                    return false;
+                }
+                let id = self.shown.borrow().get(idx).map(|(e, _)| e.id);
+                if let Some(id) = id {
+                    self.copy(id);
+                }
+            }
+        }
+        true
+    }
+
+    // ── Data ──────────────────────────────────────────────────────────────────
+
+    /// Refetch history from the daemon and redraw, keeping the selection.
+    fn reload(self: &Rc<Self>) {
+        *self.all_entries.borrow_mut() =
+            client::list_entries(None, &self.socket_path).unwrap_or_default();
+        self.render(true);
+    }
+
+    /// Listen for daemon events and reload on each, so the list stays live while
+    /// the palette is open (new copies, changes from other clients).
+    fn subscribe(self: &Rc<Self>) {
+        let (reader, handle) = match client::subscribe(&self.socket_path) {
+            Ok(sub) => sub,
+            Err(e) => {
+                eprintln!("[klip-gui] Live updates unavailable: {e}");
+                return;
+            }
+        };
+        self.subscribed.set(true);
+
+        let (tx, rx) = async_channel::unbounded::<()>();
+        std::thread::spawn(move || {
+            for line in reader.lines() {
+                if line.is_err() || tx.send_blocking(()).is_err() {
+                    break;
+                }
+            }
+        });
+        // Unblock the reader thread when the window goes away
+        self.window.connect_destroy(move |_| {
+            let _ = handle.shutdown(std::net::Shutdown::Both);
+        });
+
+        let weak = Rc::downgrade(self);
+        glib::MainContext::default().spawn_local(async move {
+            while rx.recv().await.is_ok() {
+                while rx.try_recv().is_ok() {} // coalesce bursts (e.g. pruning)
+                let Some(p) = weak.upgrade() else { break };
+                p.reload();
+            }
+            if let Some(p) = weak.upgrade() {
+                // Daemon went away; fall back to refreshing after our own actions
+                p.subscribed.set(false);
+            }
+        });
+    }
+
+    // ── Actions ───────────────────────────────────────────────────────────────
+
+    fn copy(&self, id: i64) {
+        if let Err(e) = client::copy_entry(id, &self.socket_path) {
+            eprintln!("[klip-gui] Copy failed: {e}");
+        }
+        self.window.close();
+    }
+
+    fn open_link(&self, id: i64) {
+        let url = self.all_entries.borrow().iter().find(|e| e.id == id).map(|e| e.content.trim().to_string());
+        if let Some(url) = url {
+            if let Err(e) = gio::AppInfo::launch_default_for_uri(&url, None::<&gio::AppLaunchContext>) {
+                eprintln!("[klip-gui] Could not open {url}: {e}");
+            }
+        }
+        self.window.close();
+    }
+
+    fn open_menu_for_selection(self: &Rc<Self>) {
+        if let Some(idx) = self.selected_index() {
+            self.show_row_menu(idx, None);
+        }
+    }
+
+    fn toggle_pin(self: &Rc<Self>, id: i64) {
+        if let Err(e) = client::toggle_pin(id, &self.socket_path) {
+            eprintln!("[klip-gui] Pin failed: {e}");
+        }
+        self.refresh_after_action();
+    }
+
+    fn delete(self: &Rc<Self>, id: i64) {
+        if let Err(e) = client::delete_entry(id, &self.socket_path) {
+            eprintln!("[klip-gui] Delete failed: {e}");
+        }
+        self.refresh_after_action();
+    }
+
+    fn clear_history(self: &Rc<Self>) {
+        if let Err(e) = client::clear_history(&self.socket_path) {
+            eprintln!("[klip-gui] Clear failed: {e}");
+        }
+        self.refresh_after_action();
+    }
+
+    fn refresh_after_action(self: &Rc<Self>) {
+        // When subscribed, the daemon's event for this change triggers the reload
+        if !self.subscribed.get() {
+            self.reload();
+        }
+    }
+
+    // ── Rendering ─────────────────────────────────────────────────────────────
+
+    /// Rebuild the list for the current search text. With `keep_selection`,
+    /// the selection stays on the same entry (or position, if it's gone);
+    /// otherwise the top result is selected.
+    fn render(self: &Rc<Self>, keep_selection: bool) {
+        let prev = keep_selection
+            .then(|| self.selected_index().map(|i| (self.shown.borrow()[i].0.id, i)))
+            .flatten();
+
+        // Remove rows by index, not `first_child`: the right-click popover is
+        // also a child of the list box, and `remove` would refuse it forever
+        while let Some(row) = self.list_box.row_at_index(0) {
+            self.list_box.remove(&row);
+        }
+        self.shown.borrow_mut().clear();
+
+        let all = self.all_entries.borrow().clone();
+        if all.is_empty() {
+            self.list_box.append(&placeholder_row("No clips yet — copy something!"));
+            return;
+        }
+        let query = self.search.text();
+        let results = filter_entries(all, Some(query.as_str()).filter(|q| !q.is_empty()));
+        if results.is_empty() {
+            self.list_box.append(&placeholder_row("No matches found."));
+            return;
+        }
+
+        let mut shown = Vec::with_capacity(results.len());
+        for (i, entry) in results.into_iter().enumerate() {
+            let prev_pinned = shown.last().map(|(e, _): &(ClipEntry, _)| e.pinned);
+            if entry.pinned && i == 0 {
+                self.list_box.append(&section_label("Pinned"));
+            } else if !entry.pinned && prev_pinned == Some(true) {
+                self.list_box.append(&section_label("History"));
+            }
+            let row = self.create_row(&entry, i + 1);
+            self.list_box.append(&row);
+            shown.push((entry, row));
+        }
+        let idx = prev
+            .map(|(id, i)| shown.iter().position(|(e, _)| e.id == id).unwrap_or(i))
+            .unwrap_or(0);
+        *self.shown.borrow_mut() = shown;
+        self.select(idx);
+    }
+
+    fn selected_index(&self) -> Option<usize> {
+        let row = self.list_box.selected_row()?;
+        self.shown.borrow().iter().position(|(_, r)| *r == row)
+    }
+
+    fn selected_entry(&self) -> Option<ClipEntry> {
+        let i = self.selected_index()?;
+        Some(self.shown.borrow()[i].0.clone())
+    }
+
+    /// Select the entry at `idx` (clamped to the list) and scroll it into view.
+    fn select(&self, idx: usize) {
+        let shown = self.shown.borrow();
+        let Some(last) = shown.len().checked_sub(1) else { return };
+        let row = &shown[idx.min(last)].1;
+        self.list_box.select_row(Some(row));
+        if let Some(bounds) = row.compute_bounds(&self.list_box) {
+            let adj = self.scrolled.vadjustment();
+            let (top, bottom) = (bounds.y() as f64, (bounds.y() + bounds.height()) as f64);
+            if top < adj.value() {
+                adj.set_value(top);
+            } else if bottom > adj.value() + adj.page_size() {
+                adj.set_value(bottom - adj.page_size());
+            }
+        }
+    }
+
+    fn move_selection(&self, delta: isize) {
+        let next = match self.selected_index() {
+            Some(i) => i.saturating_add_signed(delta),
+            None => 0,
+        };
+        self.select(next);
+    }
+
+    fn thumb(&self, entry: &ClipEntry) -> Thumb {
+        self.thumbs
+            .borrow_mut()
+            .entry(entry.content.clone())
+            .or_insert_with(|| load_thumb(entry))
+            .clone()
+    }
+
+    fn create_row(self: &Rc<Self>, entry: &ClipEntry, index: usize) -> gtk4::ListBoxRow {
+        let row = gtk4::ListBoxRow::new();
+        row.add_css_class("clip-row");
+
+        let hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        hbox.add_css_class("row-hbox");
+
+        if index <= 9 {
+            let badge = gtk4::Label::new(Some(&index.to_string()));
+            badge.add_css_class("badge");
+            badge.set_valign(gtk4::Align::Center);
+            hbox.append(&badge);
+        }
+
+        if entry.is_image() {
+            let label = match self.thumb(entry) {
+                Some((texture, w, h)) => {
+                    let picture = gtk4::Picture::for_paintable(&texture);
+                    picture.set_can_shrink(false);
+                    picture.add_css_class("thumb");
+                    hbox.append(&picture);
+                    gtk4::Label::new(Some(&format!("{w}×{h}")))
+                }
+                None => gtk4::Label::new(Some("Image (unavailable)")),
+            };
+            label.set_halign(gtk4::Align::Start);
+            label.set_hexpand(true);
+            label.add_css_class("clip-meta");
+            hbox.append(&label);
+        } else {
+            append_text_content(&hbox, entry);
+        }
+
+        // Pin / delete buttons. Unfocusable, so typing stays in the search box.
+        let weak = Rc::downgrade(self);
+        let id = entry.id;
+        let pin_tip = if entry.pinned { "Unpin (Alt+P)" } else { "Pin (Alt+P)" };
+        let pin = row_action_button(PIN_ICONS, pin_tip);
+        if entry.pinned {
+            pin.add_css_class("pinned");
+        }
+        pin.connect_clicked(move |_| {
+            if let Some(p) = weak.upgrade() {
+                p.toggle_pin(id);
+            }
+        });
+        hbox.append(&pin);
+
+        let weak = Rc::downgrade(self);
+        let delete = row_action_button(DELETE_ICONS, "Delete (Alt+Delete)");
+        delete.connect_clicked(move |_| {
+            if let Some(p) = weak.upgrade() {
+                p.delete(id);
+            }
+        });
+        hbox.append(&delete);
+
+        row.set_child(Some(&hbox));
+        row
+    }
+}
+
+/// Fuzzy-filter `entries` by `query`, pinned first, best matches next, then
+/// most recent; at most [`MAX_RESULTS`].
+fn filter_entries(entries: Vec<ClipEntry>, query: Option<&str>) -> Vec<ClipEntry> {
+    let mut scored: Vec<(u32, ClipEntry)> = if let Some(q) = query {
+        let mut matcher = nucleo::Matcher::new(nucleo::Config::DEFAULT);
+        let pattern = nucleo::pattern::Pattern::new(
+            q,
+            nucleo::pattern::CaseMatching::Smart,
+            nucleo::pattern::Normalization::Smart,
+            nucleo::pattern::AtomKind::Fuzzy,
+        );
+        entries
+            .into_iter()
+            .filter_map(|e| {
+                // Images have no text; let "image" / "png" find them
+                let text = if e.is_image() {
+                    format!("image {}", e.mime_type)
+                } else {
+                    e.content.clone()
+                };
+                let buf = nucleo::Utf32String::from(text.as_str());
+                pattern.score(buf.slice(..), &mut matcher).map(|s| (s, e))
+            })
+            .collect()
+    } else {
+        entries.into_iter().map(|e| (0, e)).collect()
+    };
+
+    scored.sort_by(|a, b| {
+        b.1.pinned
+            .cmp(&a.1.pinned)
+            .then_with(|| b.0.cmp(&a.0))
+            .then_with(|| b.1.updated_at.cmp(&a.1.updated_at))
+    });
+    scored.into_iter().map(|(_, e)| e).take(MAX_RESULTS).collect()
+}
+
+fn load_thumb(entry: &ClipEntry) -> Thumb {
+    use gtk4::gdk_pixbuf::Pixbuf;
+    let path = entry.image_path()?;
+    let (_, w, h) = Pixbuf::file_info(&path)?;
+    // Decode straight to thumbnail size; never upscale small images
+    let pixbuf = Pixbuf::from_file_at_scale(&path, THUMB_W.min(w), THUMB_H.min(h), true).ok()?;
+    Some((gdk::Texture::for_pixbuf(&pixbuf), w, h))
 }
 
 /// Map `1`–`9` (main row or keypad) to a 0-based entry index.
@@ -473,28 +667,35 @@ fn section_label(text: &str) -> gtk4::ListBoxRow {
     row
 }
 
-fn create_entry_row(entry: &ClipEntry, index: usize) -> gtk4::ListBoxRow {
+fn placeholder_row(text: &str) -> gtk4::ListBoxRow {
+    let lbl = gtk4::Label::new(Some(text));
+    lbl.add_css_class("empty-label");
+    lbl.set_margin_top(24);
     let row = gtk4::ListBoxRow::new();
-    row.set_widget_name(&entry.id.to_string());
-    row.add_css_class("clip-row");
+    row.set_child(Some(&lbl));
+    row.set_selectable(false);
+    row.set_activatable(false);
+    row.add_css_class("transparent-row");
+    row
+}
 
-    let hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-    hbox.add_css_class("row-hbox");
+fn row_action_button(icon_names: &[&str], tooltip: &str) -> gtk4::Button {
+    let icon = gtk4::Image::from_gicon(&gio::ThemedIcon::from_names(icon_names));
+    let button = gtk4::Button::new();
+    button.set_child(Some(&icon));
+    button.set_tooltip_text(Some(tooltip));
+    button.set_focusable(false);
+    button.set_focus_on_click(false);
+    button.set_valign(gtk4::Align::Center);
+    button.add_css_class("flat");
+    button.add_css_class("row-action");
+    button
+}
 
-    if entry.pinned {
-        let icon = gtk4::Image::from_icon_name("pin-symbolic");
-        icon.add_css_class("pin-icon");
-        hbox.append(&icon);
-    }
-
-    if index <= 9 {
-        let badge = gtk4::Label::new(Some(&index.to_string()));
-        badge.add_css_class("badge");
-        hbox.append(&badge);
-    }
-
+/// Type icon plus the first line of a text entry, with the full text as tooltip.
+fn append_text_content(hbox: &gtk4::Box, entry: &ClipEntry) {
     let type_icon_str = match entry.mime_type.as_str() {
-        t if t.contains("url")   => "🔗",
+        t if t.contains("uri")   => "🔗",
         t if t.contains("email") => "✉",
         t if t.contains("code")  => "</>",
         t if t.contains("path")  => "📁",
@@ -519,13 +720,13 @@ fn create_entry_row(entry: &ClipEntry, index: usize) -> gtk4::ListBoxRow {
     label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
     label.set_max_width_chars(35);
     label.add_css_class("clip-content");
-    
+
     if entry.mime_type.contains("code") {
         label.add_css_class("code");
-    } else if entry.mime_type.contains("url") {
+    } else if entry.mime_type.contains("uri") {
         label.add_css_class("url");
     }
-    
+
     label.set_has_tooltip(true);
     let full_content = entry.content.clone();
     label.connect_query_tooltip(move |_, _, _, _, tooltip| {
@@ -538,6 +739,4 @@ fn create_entry_row(entry: &ClipEntry, index: usize) -> gtk4::ListBoxRow {
     });
 
     hbox.append(&label);
-    row.set_child(Some(&hbox));
-    row
 }

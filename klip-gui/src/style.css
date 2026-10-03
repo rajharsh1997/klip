@@ -126,11 +126,48 @@ window {
     color: rgba(110, 159, 255, 0.9);
 }
 
-/* ── Pin icon ─────────────────────────────────────────────────────────────── */
+/* ── Image clips ──────────────────────────────────────────────────────────── */
 
-.pin-icon {
-    color: rgba(255, 200, 80, 0.7);
-    margin-right: 5px;
+.thumb {
+    border-radius: 4px;
+    margin-right: 8px;
+}
+
+.clip-meta {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.45);
+}
+
+/* ── Row actions (pin / delete) ───────────────────────────────────────────── */
+
+.row-action {
+    min-width: 0;
+    min-height: 0;
+    padding: 2px 4px;
+    margin-left: 2px;
+    background: none;
+    box-shadow: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.55);
+    opacity: 0;
+    transition: opacity 100ms ease;
+}
+
+/* Shown on hover and on the keyboard-selected row */
+.clip-row:hover .row-action,
+.clip-row:selected .row-action {
+    opacity: 1;
+}
+
+.row-action:hover {
+    color: rgba(255, 255, 255, 0.95);
+    background: rgba(255, 255, 255, 0.08);
+}
+
+/* A pinned entry always shows its (highlighted) pin */
+.row-action.pinned {
+    opacity: 1;
+    color: rgba(255, 200, 80, 0.8);
 }
 
 /* ── Section headers (Pinned / History) ───────────────────────────────────── */
@@ -174,4 +211,50 @@ window {
     box-shadow: none;
     border: none;
     outline: none;
+}
+/* ── Footer hint ──────────────────────────────────────────────────────────── */
+
+.footer-hint {
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.3);
+    padding: 5px 0 7px 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* ── Right-click menu (matches the palette, not the system theme) ─────────── */
+
+popover.klip-menu > contents {
+    background: rgba(24, 24, 32, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    padding: 4px;
+}
+
+popover.klip-menu button.menu-item {
+    color: rgba(255, 255, 255, 0.88);
+    font-size: 13px;
+    font-weight: 400;
+    padding: 6px 10px;
+    border-radius: 6px;
+    min-height: 0;
+    min-width: 200px;
+    background: none;
+    box-shadow: none;
+    border: none;
+}
+
+popover.klip-menu button.menu-item:hover,
+popover.klip-menu button.menu-item:focus {
+    background: rgba(110, 159, 255, 0.18);
+    outline: none;
+}
+
+popover.klip-menu .accel {
+    color: rgba(255, 255, 255, 0.38);
+}
+
+popover.klip-menu separator {
+    background: rgba(255, 255, 255, 0.08);
+    margin: 4px 6px;
+    min-height: 1px;
 }
