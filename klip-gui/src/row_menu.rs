@@ -130,6 +130,18 @@ impl Palette {
         button.set_child(Some(&content));
         button.add_css_class("flat");
         button.add_css_class("menu-item");
+        // The popover focuses its first item on open, and focus is highlighted
+        // like hover: move focus with the pointer so only one item is lit
+        let motion = gtk4::EventControllerMotion::new();
+        {
+            let button = button.downgrade();
+            motion.connect_enter(move |_, _, _| {
+                if let Some(b) = button.upgrade() {
+                    b.grab_focus();
+                }
+            });
+        }
+        button.add_controller(motion);
         let weak = Rc::downgrade(self);
         button.connect_clicked(move |_| {
             let Some(p) = weak.upgrade() else { return };

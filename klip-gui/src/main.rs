@@ -232,6 +232,7 @@ fn build_ui(app: &gtk4::Application, socket_path: PathBuf) {
         menu_open,
     });
     palette.install_row_menu();
+    palette.install_hover_select();
 
     // The window owns the palette; every other closure holds a weak reference.
     {
@@ -523,6 +524,27 @@ impl Palette {
                 adj.set_value(bottom - adj.page_size());
             }
         }
+    }
+
+    /// Moving the pointer over a row selects it, so the hover and keyboard
+    /// highlights never disagree. Only real motion counts: rows rebuilt under
+    /// a still pointer (e.g. while typing a search) keep the top result.
+    fn install_hover_select(self: &Rc<Self>) {
+        let motion = gtk4::EventControllerMotion::new();
+        let last = Cell::new((f64::NAN, f64::NAN));
+        let weak = Rc::downgrade(self);
+        motion.connect_motion(move |_, x, y| {
+            let Some(p) = weak.upgrade() else { return };
+            if last.replace((x, y)) == (x, y) || p.menu_open.get() {
+                return;
+            }
+            let Some(row) = p.list_box.row_at_y(y as i32) else { return };
+            if row.is_selectable() && p.list_box.selected_row().as_ref() != Some(&row) {
+                // Not `select`: the row is under the pointer, so don't scroll
+                p.list_box.select_row(Some(&row));
+            }
+        });
+        self.list_box.add_controller(motion);
     }
 
     fn move_selection(&self, delta: isize) {
